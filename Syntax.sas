@@ -4,7 +4,6 @@ option compress=yes;
 
 %let path_work=E:\DataAnalysis\DiscSod;
 
-libname cprd "E:\Data\GOLD_0723_BACKUP";
 libname a "&path_work.\Input"; *Input;
 libname b "E:\Data\Resources"; *Dictionary, Sources;
 libname x "&path_work.\Temp"; *Temporary Data;
