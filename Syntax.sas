@@ -1407,9 +1407,14 @@ left join y.cht_cov_demo_gold as b on a.patid=b.patid
 ;quit;
 data demo_2;
 set demo_1;
-rename gender=COV_DEMO_2 age=COV_DEMO_1 imd=COV_DEMO_3;
+rename gender=COV_DEMO_2 age=COV_DEMO_1;
+if imd in (1 2) then COV_DEMO_3=1;
+else if imd in (3 4) then COV_DEMO_3=2;
+else if imd in (5 6) then COV_DEMO_3=3;
+else if imd in (7 8) then COV_DEMO_3=4;
+else if imd in (9 10) then COV_DEMO_3=5;
 age=year(enrol_dt)-yob;
-keep patid trial_id age gender imd;
+keep patid trial_id age gender COV_DEMO_3;
 run;
 data x.seq_cov1_gold; set demo_2; run;
 /*proc freq data=demo_2; table cov_demo_1 - cov_demo_3/norow; run;*/
@@ -1746,7 +1751,6 @@ data y.seq_cov_gold; set temp; run;
 /* Final dataset */
 /*****************/
 
-*Wide-format;
 %MACRO XXX;
 proc sql;
 create table temp as 
@@ -1771,7 +1775,6 @@ left join y.seq_pat_gold as d on a.patid=d.patid
 %MEND; %XXX;
 data y.fin_wide_gold; set temp; run; *6788;
 
-*Long-format;
 %MACRO XXX;
 proc sql;
 create table temp as 
@@ -1789,12 +1792,14 @@ left join y.seq_cov_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
 %MEND; %XXX;
 data y.fin_long_gold; set temp; run; *75424;
 
+/**********************/
+/* Merge GOLD & Aurum */
+/**********************/
 
 
 /************************/
 /* Statistical Analysis */
 /************************/
-
 
 *Flow chart;
 %Flow (stt_data=a.gd_patient
@@ -1872,15 +1877,117 @@ data flow_gold_&trial_no.; set temp_flow_3; run;
 
 data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
 
+*Propensity score: IPTW, truncated at the 99.5th percentile to avoid outliers;
+proc logistic data=y.fin_wide_gold desc;
+class trt cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+model trt=cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+output out=ps_1 prob=prob;
+run;
+data ps_2;
+set ps_1;
+if trt=1 then iptw=1/prob;
+else if trt=0 then iptw=1/(1-prob);
+run;
+proc rank data=ps_2 out=ps_3 groups=1000;
+var iptw;
+ranks rank;
+run;
+data ps_4;
+set ps_3;
+if rank+1 < 995;
+run;
+/*proc sort data=ps_4; by descending rank; run;*/
+data y.fin_wide_w_gold; set ps_4; run;
 
 *Baseline characteristics;
+%Table1 (in_for_table1=y.fin_wide_gold
+, treatment_var=trt
+, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, continuous_var_list=cov_base_demo_1 cov_base_demo_8
+, weight=dummy_weight
+, out_table1=z.char_crude);
+%Table1 (in_for_table1=y.fin_wide_w_gold
+, treatment_var=trt
+, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, continuous_var_list=cov_base_demo_1 cov_base_demo_8
+, weight=dummy_weight
+, out_table1=z.char_crude_truncated);
+%Table1 (in_for_table1=y.fin_wide_w_gold
+, treatment_var=trt
+, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, continuous_var_list=cov_base_demo_1 cov_base_demo_8
+, weight=iptw
+, out_table1=z.char_weight);
 
-*Main analysis;
-**Weight: IPTW x IPCW;
-**Weighted cumulative incidence curve standardised to the distribution of the
-baseline variables in the study population;
-**Risk analysis: weighted pooled logistic regression model (pool the data from all sequential trials into a single model, including “trial
-indicator” as an adjustment variable);
+*Weighted cumulative incidence curve standardised to the distribution of the baseline variables in the study population;
+**Number at risk;
+%MACRO XXX;
+%do i=1 %to 6;
+%AtRisk (in_data=y.fin_wide_w_gold, out_data=atrisk_&i., outcome=out&i., exposure_var=trt
+, fu_stt_var=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt), note=main_out&i.);
+%end;
+%MEND; %XXX;
+data z.atrisk; set atrisk_1 - atrisk_6; run;
+
+**Follow-up;
+%MACRO XXX /minoperator;
+data temp;
+set y.fin_wide_w_gold;
+format fu_end_dt yymmdd10.;
+fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt);
+%do out_i=1 %to 6;
+t&out_i.= min(out&out_i._dt, fu_end_dt
+	%if &out_i. in (2 3 4) %then %do;
+	, out1_dt
+	%end;
+) - enrol_dt;
+if out&out_i._dt^="." and out&out_i._dt= min(out&out_i._dt, fu_end_dt
+	%if &out_i. in (2 3 4) %then %do;
+	, out1_dt
+	%end;
+) then out&out_i.=1; 
+else do; 
+	out&out_i.=0;
+	if fu_end_dt=cens1_dt then roc&out_i.="censor1";
+	%if &out_i. in (2 3 4) %then %do;
+		else if fu_end_dt=out1_dt then roc&out_i.="MACE";
+	%end;
+	else if fu_end_dt=cens2_dt then roc&out_i.="censor2";
+	else if fu_end_dt=cens3_dt then roc&out_i.="censor3";
+	else if fu_end_dt=cens4_dt then roc&out_i.="censor4";
+end;
+%end;
+rename trt=exposure;
+run;
+%MEND; %XXX;
+data temp_2;
+set temp;
+keep exposure t1 out1 roc1 t2 out2 roc2 t3 out3 roc3 t4 out4 roc4 t5 out5 roc5 t6 out6 roc6 iptw;
+run;
+data z.fu_itt_gold; set temp_2; run;
+
+**Curve;
+
+*Main risk analysis: weighted pooled logistic regression model (pool the data from all sequential trials into a single model, including “trial indicator” as an adjustment variable);
+
+
+*Per-protocol analysis;
+/**IPCW for per protocol analysis;*/
+/*data temp;*/
+/*set y.fin_long_gold; */
+/*format censor_dt yymmdd10.;*/
+/*if index_dt < cens5_dt and cens5_dt <= index_dt + (365.25/12)*3 then crossover=1;*/
+/*else crossover=0;*/
+/*run;*/
+/*proc logistic descending data=temp;*/
+/*class crossover cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 - cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;*/
+/*model crossover(event='0')=cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 cov_tv_demo_4 - cov_tv_demo_8 cov_tv_bp cov_tv_dx_1 - cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;*/
+/*output out=ipcw_1 prob=prob_uc;*/
+/*run;*/
+/*proc sort data=temp; by descending crossover; run;*/
+/*proc freq data=temp;*/
+/*table crossover cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;*/
+/*run;*/
 
 *Subgroup analysis: T2DM, dyslipidaemia, history of CVD;
 
