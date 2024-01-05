@@ -3,6 +3,7 @@ option compress=yes;
 /*options nosymbolgen nomlogic nomprint;*/
 
 %let path_work=E:\DataAnalysis\DiscSod;
+/*%let path_work=\\Client\E$\DataAnalysis\DiscSod;*/
 
 libname a "&path_work.\Input"; *Input;
 libname b "E:\Data\Resources"; *Dictionary, Sources;
@@ -203,7 +204,6 @@ data x.list_dx_gold; set dx_gd_4; run;
 /*proc freq data=x.list_dx_gold; table type_id; run;*/
 
 * Aurum by Chengsheng;
-data x.list_dx_aurum_cheng; set x.list_dx_aurum; run;
 data temp;
 set x.list_dx_aurum_cheng;
 keep type_id info medcodeid code_sys;
@@ -440,11 +440,17 @@ having medcode^=""
 ;quit;
 data x.list_dx_fi_gold; set fi_2; run;
 
-/**/
-/* Frailty disease code for Aurum  - x.list_dx_fi_aurum */
-/**/
+data fi_3;
+set x.efi_aurum_cheng;
+rename snomedctconceptid=code medcodeid=medcode;
+keep deficit snomedctconceptid code_sys medcodeid;
+code_sys="aurum";
+run;
+data x.list_dx_fi_aurum; set fi_3; run;
 
-data y.list_dx_fi; set x.list_dx_fi_gold x.list_dx_fi_aurum; run;
+data y.list_dx_fi; 
+set  x.list_dx_fi_aurum (drop=code) x.list_dx_fi_gold (drop=ctv3_description code); 
+run;
 
 *Product codes for frailty index;
 data list_rx_fi_gold;
@@ -672,15 +678,11 @@ data y.all_lab_gold; set lab1 lab2; run;
 /* Study population based on first hyptertension diagnosis date */
 /****************************************************************/
 
-data test;
-set y.all_info_gold;
-if death_dt^=. and death_dt <= htn_1st_dt;
-run; *48 obs;
-
 data x.incl_gold_0; 
 set y.all_info_gold;
 if death_dt=. or htn_1st_dt < death_dt;
-run;
+if (tod=. or htn_1st_dt < tod);
+run; *24512;
 
 proc sql;
 create table temp_sod as
@@ -718,24 +720,23 @@ from y.all_pat_gold as a
 inner join x.incl_gold_0 as b on a.patid=b.patid
 inner join x.incl_gold_1 as c on a.patid=c.patid
 inner join x.incl_gold_2 as d on a.patid=d.patid
-;quit; *1384 obs;
+;quit; *1383 obs;
 data y.cht_pat_gold; set temp; run;
 
 /*proc sql;*/
 /*select count(distinct patid)*/
 /*from y.cht_pat_gold*/
-/*;quit; *1365 individuals;*/
+/*;quit; *1364 individuals;*/
 
 %Flow (stt_data=a.gd_patient
-, out_data=z.flow_gold
+, out_data=test
 , elig_data_list=x.incl_pre_gold_0 x.incl_pre_gold_1 x.incl_pre_gold_2 x.incl_pre_gold_3 x.incl_gold_0 x.incl_gold_1 x.incl_gold_2
 , id=patid
-);
-
+); *1364;
 
 
 /*********************************************************************/
-/* Dataset on treatament, outcome, eligibility, covariates, sequence */
+/* Dataset on treatment, outcome, eligibility, covariates, sequence */
 /*********************************************************************/
 
 *treatment;
@@ -928,7 +929,7 @@ trial1=1;
 	if min(of enrol_prd1 - enrol_prd&i.)=0 then trial&b.=0; else trial&b.=1;
 %end;
 run;
-%MEND; %XXX; *1384 obs;
+%MEND; %XXX; *1383 obs;
 %MACRO XXX;
 proc sql;
 create table temp_4 as
@@ -939,7 +940,7 @@ select distinct patid, htn_1st_dt, index_tp
 from temp_3
 group by patid
 ;quit;
-%MEND; %XXX; *1384 obs;
+%MEND; %XXX; *1383 obs;
 %MACRO XXX;
 %do i=1 %to 20;
 data temp_5_&i.;
@@ -958,12 +959,12 @@ data temp_6; set temp_5_1 - temp_5_20; run;
 data y.seq_pat_gold; 
 set temp_6; 
 patid2=_n_;
-run; *9834 obs;
+run; *9833 obs;
 
 
-/*******************************************************************/
-/* Sequence of Trials: enrolment-assignment, baseline covariates  */
-/*******************************************************************/
+/*********************************************/
+/* Sequence of Trials: enrolment, assignment */
+/*********************************************/
 
 *enrolment-assignment;
 proc sql;
@@ -1056,6 +1057,12 @@ left join y.cht_trt_gold as d on a.patid=d.patid
 	and a.enrol_dt <= d.eventdate and substr(d.type_id,1,5)="SOD_0"
 group by a.patid, a.trial_id
 ;quit; *7871 obs;
+data x.excl_gold_7 x.excl_gold_8;
+set temp_4;
+if trt=9 then output x.excl_gold_7;
+if enrol_dt <= outcome_dt and outcome_dt <=rx_1st_dt then output x.excl_gold_8;
+/*drop outcome_dt rx_1st_dt;*/
+run;
 data temp_5;
 set temp_4;
 if trt=9 then delete;
@@ -1090,356 +1097,10 @@ having min(trial_id)=1 and incl=min(incl)
 data y.seq_asgmt_gold; set temp_7; run;
 proc freq data=y.seq_asgmt_gold; table trial_id*trt/norow nocol nopercent; run;
 
-*Baseline covariates;
-**age, sex, IMD quintiles;
-proc sql;
-create table demo_1 as
-select distinct a.*, b.*
-from y.seq_asgmt_gold as a
-left join y.cht_cov_demo_gold as b on a.patid=b.patid
-;quit;
-data demo_2;
-set demo_1;
-rename gender=COV_DEMO_2 age=COV_DEMO_1 imd=COVL_DEMO_3;
-age=year(enrol_dt)-yob;
-keep patid trial_id age gender imd;
-run;
-data x.seq_cov_base1; set demo_2; run;
-/*proc freq data=demo_2; table cov_demo_1 - cov_demo_3/norow; run;*/
 
-**most recent BMI, drinking, smoking, TC, HDL, LDL;
-***Measure;
-proc sql;
-create table temp_1 as
-select distinct a.*, b.eventdate, b.data, b.data_tp
-from y.seq_asgmt_gold as a
-left join y.cht_cov_lab_gold as b on a.patid=b.patid 
-		and b.eventdate <= a.enrol_dt and b.data_tp in ("BMI","TC","HDL","LDL")
-group by a.patid, a.trial_id, b.data_tp
-having max(b.eventdate)=b.eventdate
-;quit;
-/*proc freq data=temp_1; table data*data_tp; run;*/
-/*data test; set temp_1; if data>=50; run;*/
-data temp_2; 
-set temp_1; 
-if data=0 then data1=.;
-else if data>=100 then data1=.;
-else data1=data;
-drop data;
-rename data1=data;
-run;
-/*proc freq data=temp_2; table data*data_tp; run;*/
-/*proc summary data=temp_2; class data_tp; var data; output out=test; run;*/
-proc sql;
-create table temp_3 as 
-select distinct patid, htn_1st_dt, enrol_dt, trial_id, trt, eventdate
-		, mean(data) as data, data_tp
-from temp_2
-group by patid, trial_id, eventdate, data_tp
-;quit;
-/*proc sql;*/
-/*create table test as*/
-/*select distinct **/
-/*from temp_3*/
-/*group by patid, trial_id, data_tp*/
-/*having count(data)>1*/
-/*;quit;*/
-proc sql;
-create table temp_4 as
-select distinct a.patid, a.trial_id, b.data as BMI
-		, c.data as TC, d.data as LDL, e.data as HDL 
-from temp_3 as a
-left join temp_3 as b on a.patid=b.patid and a.trial_id=b.trial_id and b.data_tp="BMI"
-left join temp_3 as c on a.patid=c.patid and a.trial_id=c.trial_id and c.data_tp="TC"
-left join temp_3 as d on a.patid=d.patid and a.trial_id=d.trial_id and d.data_tp="LDL"
-left join temp_3 as e on a.patid=e.patid and a.trial_id=e.trial_id and e.data_tp="HDL"
-;quit;
-data temp_5;
-set temp_4;
-if 0 < BMI < 18.5 then COV_DEMO_4="1";
-else if 18.5 <= BMI and BMI < 25.0 then COV_DEMO_4="2";
-else if 25.0 <= BMI and BMI < 30.0 then COV_DEMO_4="3";
-else if 30.0 <= BMI then COV_DEMO_4="4";
-else cov_demo_4="9";
-
-if TC > 3.8 or LDL > 2.6 then COV_DX_7_lab=1; 
-else COV_DX_7_lab=0;
-run; 
-/*proc freq data=temp_5; table cov_demo_4 cov_dx_7_lab; run;*/
-/*data test;*/
-/*set temp_5;*/
-/*if cov_dx_7_lab^=1;*/
-/*run;*/
-/*data test;*/
-/*set temp_5;*/
-/*if cov_demo_4="9";*/
-/*run;*/
-data x.seq_cov_base2; set temp_5; run;
-
-***Answer;
-proc sql;
-create table as_1 as
-select distinct a.*, b.eventdate, b.data, b.data_tp
-from y.seq_asgmt_gold as a
-left join y.cht_cov_lab_gold as b on a.patid=b.patid 
-		and b.eventdate <= a.enrol_dt and b.data_tp in ("ALC","SMK")
-group by a.patid, a.trial_id, b.data_tp
-having max(b.eventdate)=b.eventdate
-;quit;
-/*proc freq data=as_1; table data*data_tp/norow nocol nopercent; run; *1,2,3;*/
-/*proc sql;*/
-/*create table test as*/
-/*select distinct **/
-/*from as_1*/
-/*group by patid, trial_id, data_tp*/
-/*having count(data)>1*/
-/*;quit; */
-proc sql;
-create table as_2 as
-select distinct patid, htn_1st_dt, enrol_dt, trial_id, trt, eventdate
-		, (case when min(input(data,1.))=1 then "1" 
-			else case when max(input(data,1.))=3 then "3" 
-			else "2" end end) as data
-		, data_tp
-from as_1
-group by patid, trial_id, data_tp
-;quit; *priority: Yes (1) > Past (3) > No (2);
-/*proc sql;*/
-/*create table test2 as*/
-/*select distinct a.*, b.data as data_check*/
-/*from test as a*/
-/*left join as_2 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.data_tp=b.data_tp*/
-/*;quit;*/
-proc sql;
-create table as_3 as
-select distinct a.*, b.data as data_past
-from as_2 as a
-left join y.cht_cov_lab_gold as b on a.patid=b.patid and a.data_tp=b.data_tp 
-		and b.eventdate < a.enrol_dt and a.data^=b.data
-;quit;*history;
-/*proc freq data=as_3; table data*data_past/norow nocol nopercent; run;*/
-proc sql;
-create table as_4 as
-select distinct patid, htn_1st_dt, enrol_dt, trial_id, trt, eventdate, data, data_tp
-		, (case when data_past="" then ""
-			else case when min(input(data_past,1.))=1 then "1" 
-			else case when max(input(data_past,1.))=3 then "3" 
-			else "2" end end end) as data_past
-from as_3
-group by patid, trial_id, data_tp
-;quit; *priority: Yes (1) > Past (3) > No (2);
-data as_5;
-set as_4;
-if data_past="" then data_new=data;
-if data=1 then data_new="1";
-if data=3 then data_new="3";
-if data=2 then do; 
-if data_past=0 then data_new="2";
-if data_past in ("1" "3") then data_new="3";
-end;
-run;
-/*proc freq data=as_5; table data_new; run;*/
-proc sql;
-create table as_6 as
-select distinct patid, trial_id, data_new as data, data_tp
-from as_5
-;quit;
-/*proc sql;*/
-/*create table test as*/
-/*select distinct **/
-/*from as_6*/
-/*group by patid, trial_id, data_tp*/
-/*having count(data)>1*/
-/*;quit;*/
-proc sql;
-create table as_7 as
-select distinct a.patid, a.trial_id, b.data as ALC, c.data as SMK
-from as_6 as a
-left join as_6 as b on a.patid=b.patid and a.trial_id=b.trial_id and b.data_tp="ALC"
-left join as_6 as c on a.patid=c.patid and a.trial_id=c.trial_id and c.data_tp="SMK"
-;quit;
-data as_8;
-set as_7;
-if ALC="" then COV_DEMO_5="9";
-else COV_DEMO_5=ALC;
-if SMK="" then COV_DEMO_6="9";
-else COV_DEMO_6=SMK;
-run;
-/*proc freq data=as_8; table cov_demo_5 cov_demo_6/norow; run;*/
-data x.seq_cov_base3; set as_8; run;
-
-**COV_BP:recent BP (within 180d);
-proc sql;
-create table bp_1 as
-select distinct a.*, b.eventdate, b.data, b.data_tp
-from y.seq_asgmt_gold as a
-left join y.cht_cov_lab_gold as b on a.patid=b.patid 
-		and a.enrol_dt-180 < b.eventdate and b.eventdate <= a.enrol_dt and b.data_tp in ("SBP", "DBP")
-group by a.patid, a.trial_id
-having max(b.eventdate)=b.eventdate
-;quit;
-/*proc freq data=bp_1; table data*data_tp/norow nocol nopercent; run;*/
-data bp_2; 
-set bp_1; 
-if data=0 then data1=.;
-else data1=data;
-drop data;
-rename data1=data;
-run;
-/*proc freq data=bp_2; table data*data_tp/norow nocol nopercent; run;*/
-proc sql;
-create table bp_3 as 
-select distinct patid, htn_1st_dt, enrol_dt, trial_id, trt, eventdate, mean(data) as data, data_tp
-from bp_2
-group by patid, trial_id, eventdate, data_tp
-;quit;
-/*proc sql;*/
-/*create table test as*/
-/*select **/
-/*from bp_3 */
-/*group by patid, trial_id, eventdate*/
-/*having count(data)>2*/
-/*;quit;*/
-proc sql;
-create table bp_4 as 
-select distinct patid, trial_id
-		, max(case when data_tp="SBP" then data else . end) as SBP
-		, max(case when data_tp="DBP" then data else . end) as DBP
-from bp_3
-group by patid, trial_id
-;quit;
-
-data bp_5; set bp_4;
-if SBP < 120 and DBP < 80 then COV_BP=1; *normal;
-if (120 <= SBP and SBP < 130) and DBP < 80 then COV_BP=2; *elevated;
-	if (130 <= SBP and SBP < 140) or (80 <= DBP and DBP < 90) then COV_BP=3;*high BP stage 1;
-if (140 <= SBP) or (90 <= DBP) then COV_BP=4; *high BP stage 2;
-if SBP=. or DBP=. then COV_BP=9; *missing;
-run;
-/*proc freq data=bp_5; table cov_lab_1; run;*/
-data x.seq_cov_base4; set bp_5; run;
-
-**frailty index;
-proc sql;
-create table fi_1 as
-select distinct a.patid, a.trial_id, a.enrol_dt, (case when count(distinct c.ingr)>=5 then 1 else 0 end) as polypharmacy
-from y.seq_asgmt_gold as a
-left join y.all_rx_gold as b on a.patid=b.patid and a.enrol_dt - 180 < b.eventdate and b.eventdate <= a.enrol_dt
-left join y.list_rx_fi as c on b.prodcode=c.code and c.code_sys="gold"
-group by a.patid, a.trial_id
-;quit;
-proc sql;
-create table fi_2 as
-select distinct a.*, count(distinct c.deficit) as n_deficit
-from fi_1 as a
-left join y.all_dx_gold as b on a.patid=b.patid and b.eventdate <= a.enrol_dt and b.code_sys="gold"
-left join y.list_dx_fi as c on b.code=c.medcode and c.code_sys="gold"
-group by a.patid, a.trial_id
-;quit;
-data fi_3;
-set fi_2;
-eFI = (n_deficit + polypharmacy)/36;
-if 0 <= eFI AND eFI <= 0.12 then COV_DEMO_7=1; *Fit;
-if 0.12 < eFI AND eFI <= 0.24 then COV_DEMO_7=2; *Mild frailty;
-if 0.24 < eFI AND eFI <= 0.36 then COV_DEMO_7=3; *Moderate frailty;
-if 0.36 < eFI then COV_DEMO_7=4; *Severe frailty;
-drop enrol_dt polypharmacy n_deficit; 
-run;
-/*proc freq data=fi_3; table COV_DEMO_7/norow; run;*/
-data x.seq_cov_base5; set fi_3; run;
-
-
-**number of general practice visits within 180;
-proc sql;
-create table visit_1 as
-select distinct a.patid, a.trial_id, a.enrol_dt, b.eventdate
-from y.seq_asgmt_gold as a
-left join a.gd_consultation as b on a.patid=b.patid and a.enrol_dt - 180 < b.eventdate and b.eventdate <= a.enrol_dt
-;quit;
-proc sql;
-create table visit_2 as
-select distinct patid, trial_id, count(distinct eventdate) as COV_DEMO_8
-from visit_1
-group by patid, trial_id
-;quit;
-data x.seq_cov_base6; set visit_2; run;
-
-**history of dx, rx (*dyslipidaemia would be defined by dx and lab data);
-proc sql;
-create table history_1 as
-select distinct a.patid, a.trial_id, a.enrol_dt, b.*
-from y.seq_asgmt_gold as a
-inner join y.cht_cov_dxrx_gold as b on a.patid=b.patid and 0 < b.eventdate and b.eventdate <= a.enrol_dt
-where substr(type_id,1,6)="COV_DX"
-;quit;
-data history_2;
-set history_1;
-if type_id="COV_DX_13" and eventdate <= enrol_dt-180 then delete;
-run;*Infection but not recent;
-proc sql;
-create table history_3 as
-select distinct a.patid, a.trial_id, a.enrol_dt, b.*
-from y.seq_asgmt_gold as a
-inner join y.cht_cov_dxrx_gold as b on a.patid=b.patid and (a.enrol_dt-180 < b.eventdate and b.eventdate <= a.enrol_dt) 
-where substr(type_id,1,6)="COV_RX"
-;quit;
-data history_4; set history_2 history_3; run;
-%MACRO XXX;
-proc sql;
-create table history_5 as
-select distinct patid, trial_id, enrol_dt
-	%do a=1 %to 24; , (case when type_id="COV_DX_&a." then 1 else 0 end) as COV_DX_&a. %end;
-	%do b=1 %to 22; , (case when type_id="COV_RX_&b." then 1 else 0 end) as COV_RX_&b. %end;
-from history_4
-;quit;
-proc sql;
-create table history_6 as
-select distinct patid, trial_id, enrol_dt
-	%do a=1 %to 24; , max(COV_DX_&a.) as COV_DX_&a. %end;
-	%do b=1 %to 22; , max(COV_RX_&b.) as COV_RX_&b. %end;
-from history_5
-group by patid, trial_id
-;quit;
-%MEND; %XXX;
-proc sql;
-create table history_7 as
-select distinct a.patid, a.trial_id, b.*, c.cov_dx_7_lab
-from y.seq_asgmt_gold as a
-left join history_6 as b on a.patid=b.patid and a.trial_id=b.trial_id
-left join x.seq_cov_base2 as c on a.patid=c.patid and a.trial_id=c.trial_id
-;quit;
-data history_8;
-set history_7;
-V=max(cov_dx_7, cov_dx_7_lab);
-drop cov_dx_7 cov_dx_7_lab;
-rename v=COV_DX_7;
-Run;
-proc stdize data=history_8 out=history_9 reponly missing=0; run;
-/*proc tabulate data=history_9;*/
-/*class COV_DX_1 - COV_DX_24 COV_RX_1 - COV_RX_22;*/
-/*table (all COV_DX_1 - COV_DX_24 COV_RX_1 - COV_RX_22),(N ColPctn);*/
-/*run;*/
-data x.seq_cov_base7; set history_9; run;
-
-proc sql;
-create table temp as
-select distinct a.*, b.*, c.*, d.*, e.*, f.*, g.*, h.*
-from y.seq_asgmt_gold as a
-left join x.seq_cov_base1 as b on a.patid=b.patid and a.trial_id=b.trial_id
-left join x.seq_cov_base2 as c on a.patid=c.patid and a.trial_id=c.trial_id
-left join x.seq_cov_base3 as d on a.patid=d.patid and a.trial_id=d.trial_id
-left join x.seq_cov_base4 as e on a.patid=e.patid and a.trial_id=e.trial_id
-left join x.seq_cov_base5 as f on a.patid=f.patid and a.trial_id=f.trial_id
-left join x.seq_cov_base6 as g on a.patid=g.patid and a.trial_id=g.trial_id
-left join x.seq_cov_base7 as h on a.patid=h.patid and a.trial_id=h.trial_id
-;quit;
-data y.seq_cov_base_gold; set temp; run;
-
-
-
-/**********************************************************/
-/* Follow-up: outcome, censoring, time-varying covariates */
-/**********************************************************/
+/*********************************/
+/* Follow-up: outcome, censoring */
+/*********************************/
 
 *outcome;
 proc sql;
@@ -1477,7 +1138,6 @@ data x.seq_fu0_gold; set out_4; run;
 
 *censoring;
 **death, loss to follow-up (transfer out), three years after assignment, or the end of the study period;
-
 proc sql;
 create table cens_1 as
 select distinct a.*, b.death_dt as cens1_dt format yymmdd10.
@@ -1604,7 +1264,6 @@ group by patid, trial_id
 data x.seq_fu3_gold; set stnd_8; run; *discontinue at least one standard form of index class drug;
 
 
-
 **continuation arm: discontinuation of at least one sodium-containing drug class;
 proc sql;
 create table cont_1 as
@@ -1677,7 +1336,6 @@ group by patid, trial_id
 ;quit; 
 data x.seq_fu4_gold; set cont_8; run; *discontinue at least one sodium-containing drug;
 
-
 proc sql;
 create table temp as
 select distinct a.*, b.*, c.*, d.*, e.*, f.*
@@ -1688,15 +1346,23 @@ left join x.seq_fu2_gold as d on a.patid=d.patid and a.trial_id=d.trial_id
 left join x.seq_fu3_gold as e on a.patid=e.patid and a.trial_id=e.trial_id
 left join x.seq_fu4_gold as f on a.patid=f.patid and a.trial_id=f.trial_id
 ;quit;
+/*data test;*/
+/*set temp;*/
+/*if enrol_dt > min(cens1_dt, cens2_dt, cens3_dt, cens4_dt);*/
+/*run; *9;*/
 data temp2;
 set temp;
+if enrol_dt > min(cens1_dt, cens2_dt, cens3_dt, cens4_dt) then delete;
 format cens5_dt yymmdd10.;
 cens5_dt=min(cens5_dt1, cens5_dt2);
 run;
 data y.seq_fu_gold; set temp2; run;
 
 
-*time-varying covariates;
+
+/***********************************************/
+/* Covariates: baseline, time-varing variables */
+/***********************************************/
 data temp_1;
 set y.seq_asgmt_gold;
 array date{*} index_dt1 - index_dt12;
@@ -1728,8 +1394,400 @@ order by patid, trial_id, time_id
 ;quit;
 data temp_5;
 set temp_4;
-if index_dt > min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt) then delete;
-run;*81564 > 73826 obs;
+if index_dt > min(cens1_dt, cens2_dt, cens3_dt, cens4_dt) then delete;
+run;*81564 > 75424 obs;
+data x.seq_indextv_gold; set temp_5; keep patid trial_id index_dt time_id enrol_dt trt; run;
+
+**age, sex, IMD quintiles;
+proc sql;
+create table demo_1 as
+select distinct a.patid, a.trial_id, a.enrol_dt, b.*
+from x.seq_indextv_gold as a
+left join y.cht_cov_demo_gold as b on a.patid=b.patid
+;quit;
+data demo_2;
+set demo_1;
+rename gender=COV_DEMO_2 age=COV_DEMO_1 imd=COV_DEMO_3;
+age=year(enrol_dt)-yob;
+keep patid trial_id age gender imd;
+run;
+data x.seq_cov1_gold; set demo_2; run;
+/*proc freq data=demo_2; table cov_demo_1 - cov_demo_3/norow; run;*/
+
+**most recent BMI, drinking, smoking, TC, HDL, LDL;
+***Measure;
+proc sql;
+create table temp_1 as
+select distinct a.*, b.eventdate, b.data, b.data_tp
+from x.seq_indextv_gold as a
+left join y.cht_cov_lab_gold as b on a.patid=b.patid 
+		and b.eventdate <= a.index_dt and b.data_tp in ("BMI","TC","HDL","LDL")
+group by a.patid, a.trial_id, a.index_dt, b.data_tp
+having max(b.eventdate)=b.eventdate
+;quit;
+/*proc freq data=temp_1; table data*data_tp; run;*/
+/*data test; set temp_1; if data>=50; run;*/
+data temp_2; 
+set temp_1; 
+if data=0 then data1=.;
+else if data>=100 then data1=.;
+else data1=data;
+drop data;
+rename data1=data;
+run;
+/*proc freq data=temp_2; table data*data_tp; run;*/
+/*proc summary data=temp_2; class data_tp; var data; output out=test; run;*/
+proc sql;
+create table temp_3 as 
+select distinct patid, index_dt, enrol_dt, trial_id, time_id, trt, eventdate
+		, mean(data) as data, data_tp
+from temp_2
+group by patid, trial_id, time_id,  eventdate, data_tp
+;quit;
+/*proc sql;*/
+/*create table test as*/
+/*select distinct **/
+/*from temp_3*/
+/*group by patid, trial_id, time_id, data_tp*/
+/*having count(data)>1*/
+/*;quit;*/
+proc sql;
+create table temp_4 as
+select distinct a.patid, a.trial_id, a.time_id, b.data as BMI
+		, c.data as TC, d.data as LDL, e.data as HDL 
+from temp_3 as a
+left join temp_3 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.time_id=b.time_id and b.data_tp="BMI"
+left join temp_3 as c on a.patid=c.patid and a.trial_id=c.trial_id and a.time_id=c.time_id and c.data_tp="TC"
+left join temp_3 as d on a.patid=d.patid and a.trial_id=d.trial_id and a.time_id=d.time_id and d.data_tp="LDL"
+left join temp_3 as e on a.patid=e.patid and a.trial_id=e.trial_id and a.time_id=e.time_id and e.data_tp="HDL"
+;quit;
+data temp_5;
+set temp_4;
+if 0 < BMI < 18.5 then COV_DEMO_4="1";
+else if 18.5 <= BMI and BMI < 25.0 then COV_DEMO_4="2";
+else if 25.0 <= BMI and BMI < 30.0 then COV_DEMO_4="3";
+else if 30.0 <= BMI then COV_DEMO_4="4";
+else cov_demo_4="9";
+
+if TC > 3.8 or LDL > 2.6 then COV_DX_7_lab=1; 
+else COV_DX_7_lab=0;
+run; 
+/*proc freq data=temp_5; table cov_demo_4 cov_dx_7_lab; run;*/
+/*data test;*/
+/*set temp_5;*/
+/*if cov_dx_7_lab^=1;*/
+/*run;*/
+/*data test;*/
+/*set temp_5;*/
+/*if cov_demo_4="9";*/
+/*run;*/
+data x.seq_cov2_gold; set temp_5; run;
+
+***Answer;
+proc sql;
+create table as_1 as
+select distinct a.*, b.eventdate, b.data, b.data_tp
+from x.seq_indextv_gold as a
+left join y.cht_cov_lab_gold as b on a.patid=b.patid 
+		and b.eventdate <= a.index_dt and b.data_tp in ("ALC","SMK")
+group by a.patid, a.trial_id, a.time_id, b.data_tp
+having max(b.eventdate)=b.eventdate
+;quit;
+/*proc freq data=as_1; table data*data_tp/norow nocol nopercent; run; *1,2,3;*/
+/*proc sql;*/
+/*create table test as*/
+/*select distinct **/
+/*from as_1*/
+/*group by patid, trial_id, time_id, data_tp*/
+/*having count(data)>1*/
+/*;quit; */
+proc sql;
+create table as_2 as
+select distinct patid, trial_id, enrol_dt, time_id, index_dt, trt, eventdate
+		, (case when min(input(data,1.))=1 then "1" 
+			else case when max(input(data,1.))=3 then "3" 
+			else "2" end end) as data
+		, data_tp
+from as_1
+group by patid, trial_id, time_id, data_tp
+;quit; *priority: Yes (1) > Past (3) > No (2);
+/*proc sql;*/
+/*create table test2 as*/
+/*select distinct a.*, b.data as data_check*/
+/*from test as a*/
+/*left join as_2 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.time_id=b.time_id and a.data_tp=b.data_tp */
+/*;quit;*/
+proc sql;
+create table as_3 as
+select distinct a.*, b.data as data_past
+from as_2 as a
+left join y.cht_cov_lab_gold as b on a.patid=b.patid and a.data_tp=b.data_tp 
+		and b.eventdate < a.index_dt and a.data^=b.data
+;quit;*history;
+/*proc freq data=as_3; table data*data_past/norow nocol nopercent; run;*/
+proc sql;
+create table as_4 as
+select distinct patid, trial_id, enrol_dt, time_id, index_dt, trt, eventdate, data, data_tp
+		, (case when data_past="" then ""
+			else case when min(input(data_past,1.))=1 then "1" 
+			else case when max(input(data_past,1.))=3 then "3" 
+			else "2" end end end) as data_past
+from as_3
+group by patid, trial_id, time_id, data_tp
+;quit; *priority: Yes (1) > Past (3) > No (2);
+data as_5;
+set as_4;
+if data_past="" then data_new=data;
+if data=1 then data_new="1";
+if data=3 then data_new="3";
+if data=2 then do; 
+if data_past=0 then data_new="2";
+if data_past in ("1" "3") then data_new="3";
+end;
+run;
+/*proc freq data=as_5; table data_new; run;*/
+proc sql;
+create table as_6 as
+select distinct patid, trial_id, time_id, data_new as data, data_tp
+from as_5
+;quit;
+/*proc sql;*/
+/*create table test as*/
+/*select distinct **/
+/*from as_6*/
+/*group by patid, trial_id, time_id, data_tp*/
+/*having count(data)>1*/
+/*;quit;*/
+proc sql;
+create table as_7 as
+select distinct a.patid, a.trial_id, a.time_id, b.data as ALC, c.data as SMK
+from as_6 as a
+left join as_6 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.time_id=b.time_id and b.data_tp="ALC"
+left join as_6 as c on a.patid=c.patid and a.trial_id=c.trial_id and a.time_id=c.time_id and c.data_tp="SMK"
+;quit;
+data as_8;
+set as_7;
+if ALC="" then COV_DEMO_5="9";
+else COV_DEMO_5=ALC;
+if SMK="" then COV_DEMO_6="9";
+else COV_DEMO_6=SMK;
+run;
+/*proc freq data=as_8; table cov_demo_5 cov_demo_6/norow; run;*/
+data x.seq_cov3_gold; set as_8; run;
+
+**COV_BP:recent BP (within 180d);
+proc sql;
+create table bp_1 as
+select distinct a.*, b.eventdate, b.data, b.data_tp
+from x.seq_indextv_gold as a
+left join y.cht_cov_lab_gold as b on a.patid=b.patid 
+		and a.index_dt-180 < b.eventdate and b.eventdate <= a.index_dt and b.data_tp in ("SBP", "DBP")
+group by a.patid, a.trial_id, a.time_id
+having max(b.eventdate)=b.eventdate
+;quit;
+/*proc freq data=bp_1; table data*data_tp/norow nocol nopercent; run;*/
+data bp_2; 
+set bp_1; 
+if data=0 then data1=.;
+else data1=data;
+drop data;
+rename data1=data;
+run;
+/*proc freq data=bp_2; table data*data_tp/norow nocol nopercent; run;*/
+proc sql;
+create table bp_3 as 
+select distinct patid, trial_id, enrol_dt, time_id, index_dt, trt, eventdate, mean(data) as data, data_tp
+from bp_2
+group by patid, trial_id, time_id, eventdate, data_tp
+;quit;
+/*proc sql;*/
+/*create table test as*/
+/*select **/
+/*from bp_3 */
+/*group by patid, trial_id, eventdate*/
+/*having count(data)>2*/
+/*;quit;*/
+proc sql;
+create table bp_4 as 
+select distinct patid, trial_id, time_id
+		, max(case when data_tp="SBP" then data else . end) as SBP
+		, max(case when data_tp="DBP" then data else . end) as DBP
+from bp_3
+group by patid, trial_id, time_id
+;quit;
+data bp_5; set bp_4;
+if SBP < 120 and DBP < 80 then COV_BP=1; *normal;
+if (120 <= SBP and SBP < 130) and DBP < 80 then COV_BP=2; *elevated;
+	if (130 <= SBP and SBP < 140) or (80 <= DBP and DBP < 90) then COV_BP=3;*high BP stage 1;
+if (140 <= SBP) or (90 <= DBP) then COV_BP=4; *high BP stage 2;
+if SBP=. or DBP=. then COV_BP=9; *missing;
+run;
+/*proc freq data=bp_5; table cov_lab_1; run;*/
+data x.seq_cov4_gold; set bp_5; run;
+
+**frailty index;
+proc sql;
+create table fi_1 as
+select distinct a.patid, a.trial_id, a.enrol_dt, a.time_id, a.index_dt
+	, (case when count(distinct c.ingr)>=5 then 1 else 0 end) as polypharmacy
+from x.seq_indextv_gold as a
+left join y.all_rx_gold as b on a.patid=b.patid and a.index_dt - 180 < b.eventdate and b.eventdate <= a.index_dt
+left join y.list_rx_fi as c on b.prodcode=c.code and c.code_sys="gold"
+group by a.patid, a.trial_id
+;quit;
+proc sql;
+create table fi_2 as
+select distinct a.*, count(distinct c.deficit) as n_deficit
+from fi_1 as a
+left join y.all_dx_gold as b on a.patid=b.patid and b.eventdate <= a.index_dt and b.code_sys="gold"
+left join y.list_dx_fi as c on b.code=c.medcode and c.code_sys="gold"
+group by a.patid, a.trial_id, a.time_id
+;quit;
+data fi_3;
+set fi_2;
+eFI = (n_deficit + polypharmacy)/36;
+if 0 <= eFI AND eFI <= 0.12 then COV_DEMO_7=1; *Fit;
+if 0.12 < eFI AND eFI <= 0.24 then COV_DEMO_7=2; *Mild frailty;
+if 0.24 < eFI AND eFI <= 0.36 then COV_DEMO_7=3; *Moderate frailty;
+if 0.36 < eFI then COV_DEMO_7=4; *Severe frailty;
+drop polypharmacy n_deficit; 
+run;
+/*proc freq data=fi_3; table COV_DEMO_7/norow; run;*/
+data x.seq_cov5_gold; set fi_3; run;
+
+
+**number of general practice visits within 180;
+proc sql;
+create table visit_1 as
+select distinct a.patid, a.trial_id, a.enrol_dt, a.time_id, a.index_dt, b.eventdate
+from x.seq_indextv_gold as a
+left join a.gd_consultation as b on a.patid=b.patid and a.index_dt - 180 < b.eventdate and b.eventdate <= a.index_dt
+;quit;
+proc sql;
+create table visit_2 as
+select distinct patid, trial_id, time_id, count(distinct eventdate) as COV_DEMO_8
+from visit_1
+group by patid, trial_id, time_id
+;quit;
+data x.seq_cov6_gold; set visit_2; run;
+
+**history of dx, rx (*dyslipidaemia would be defined by dx and lab data);
+proc sql;
+create table history_1 as
+select distinct a.patid, a.trial_id, a.enrol_dt, a.time_id, a.index_dt, b.*
+from x.seq_indextv_gold as a
+inner join y.cht_cov_dxrx_gold as b on a.patid=b.patid and 0 < b.eventdate and b.eventdate <= a.index_dt
+where substr(type_id,1,6)="COV_DX"
+;quit;
+data history_2;
+set history_1;
+if type_id="COV_DX_13" and eventdate <= index_dt-180 then delete;
+run;*Infection but not recent;
+proc sql;
+create table history_3 as
+select distinct a.patid, a.trial_id, a.enrol_dt, a.time_id, a.index_dt, b.*
+from x.seq_indextv_gold as a
+inner join y.cht_cov_dxrx_gold as b on a.patid=b.patid and (a.index_dt-180 < b.eventdate and b.eventdate <= a.index_dt) 
+where substr(type_id,1,6)="COV_RX"
+;quit;
+data history_4; set history_2 history_3; run;
+%MACRO XXX;
+proc sql;
+create table history_5 as
+select distinct patid, trial_id, enrol_dt, time_id, index_dt
+	%do a=1 %to 24; , (case when type_id="COV_DX_&a." then 1 else 0 end) as COV_DX_&a. %end;
+	%do b=1 %to 22; , (case when type_id="COV_RX_&b." then 1 else 0 end) as COV_RX_&b. %end;
+from history_4
+;quit;
+proc sql;
+create table history_6 as
+select distinct patid, trial_id, enrol_dt, time_id, index_dt
+	%do a=1 %to 24; , max(COV_DX_&a.) as COV_DX_&a. %end;
+	%do b=1 %to 22; , max(COV_RX_&b.) as COV_RX_&b. %end;
+from history_5
+group by patid, trial_id, time_id
+;quit;
+%MEND; %XXX;
+proc sql;
+create table history_7 as
+select distinct a.patid, a.trial_id, a.time_id, b.*, c.cov_dx_7_lab
+from x.seq_indextv_gold as a
+left join history_6 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.time_id=b.time_id
+left join x.seq_cov2_gold as c on a.patid=c.patid and a.trial_id=c.trial_id and a.time_id=c.time_id
+;quit;
+data history_8;
+set history_7;
+V=max(cov_dx_7, cov_dx_7_lab);
+drop cov_dx_7 cov_dx_7_lab;
+rename v=COV_DX_7;
+Run;
+proc stdize data=history_8 out=history_9 reponly missing=0; run;
+/*proc tabulate data=history_9;*/
+/*class COV_DX_1 - COV_DX_24 COV_RX_1 - COV_RX_22;*/
+/*table (all COV_DX_1 - COV_DX_24 COV_RX_1 - COV_RX_22),(N ColPctn);*/
+/*run;*/
+data x.seq_cov7_gold; set history_9; run;
+
+proc sql;
+create table temp as
+select distinct a.*, b.*, c.*, d.*, e.*, f.*, g.*, h.*
+from x.seq_indextv_gold as a
+left join x.seq_cov1_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
+left join x.seq_cov2_gold as c on a.patid=c.patid and a.trial_id=c.trial_id and a.time_id=c.time_id
+left join x.seq_cov3_gold as d on a.patid=d.patid and a.trial_id=d.trial_id and a.time_id=d.time_id
+left join x.seq_cov4_gold as e on a.patid=e.patid and a.trial_id=e.trial_id and a.time_id=e.time_id
+left join x.seq_cov5_gold as f on a.patid=f.patid and a.trial_id=f.trial_id and a.time_id=f.time_id
+left join x.seq_cov6_gold as g on a.patid=g.patid and a.trial_id=g.trial_id and a.time_id=g.time_id
+left join x.seq_cov7_gold as h on a.patid=h.patid and a.trial_id=h.trial_id and a.time_id=h.time_id
+;quit;
+data y.seq_cov_gold; set temp; run;
+
+/*****************/
+/* Final dataset */
+/*****************/
+
+*Wide-format;
+%MACRO XXX;
+proc sql;
+create table temp as 
+select distinct a.*, d.htn_1st_dt
+	%do a=1 %to 6;
+	, b.out&a._dt %end;
+	%do b=1 %to 5;
+	, b.cens&b._dt %end;
+	, b.cens5_dt1, b.cens5_dt2
+	%do c=1 %to 8; 
+	, c.cov_demo_&c. as cov_base_demo_&c. %end;
+	, c.cov_bp as cov_base_bp
+	%do d=1 %to 24;
+	, c.cov_dx_&d. as cov_base_dx_&d. %end;
+	%do e=1 %to 22;
+	, c.cov_rx_&e. as cov_base_rx_&e. %end;
+from y.seq_asgmt_gold as a
+inner join y.seq_fu_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
+left join y.seq_cov_gold as c on a.patid=c.patid and a.trial_id=c.trial_id and c.time_id=1
+left join y.seq_pat_gold as d on a.patid=d.patid
+;quit;
+%MEND; %XXX;
+data y.fin_wide_gold; set temp; run; *6788;
+
+*Long-format;
+%MACRO XXX;
+proc sql;
+create table temp as 
+select distinct a.*, b.time_id, b.index_dt
+	%do a=1 %to 8; 
+	, b.cov_demo_&a. as cov_tv_demo_&a. %end;
+	, b.cov_bp as cov_tv_bp
+	%do b=1 %to 24;
+	, b.cov_dx_&b. as cov_tv_dx_&b. %end;
+	%do c=1 %to 22;
+	, b.cov_rx_&c. as cov_tv_rx_&c. %end;
+from y.fin_wide_gold as a 
+left join y.seq_cov_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+%MEND; %XXX;
+data y.fin_long_gold; set temp; run; *75424;
 
 
 
@@ -1738,5 +1796,98 @@ run;*81564 > 73826 obs;
 /************************/
 
 
+*Flow chart;
+%Flow (stt_data=a.gd_patient
+, out_data=temp_flow
+, elig_data_list=x.incl_pre_gold_0 x.incl_pre_gold_1 x.incl_pre_gold_2 x.incl_pre_gold_3 x.incl_gold_0 x.incl_gold_1 x.incl_gold_2
+, id=patid
+);
+data flow_gold_0;
+set temp_flow;
+trial_id=0;
+run;
 
+proc freq data=y.fin_wide_gold; table trial_id*trt/norow nocol nopercent out=seq_pat; run;
+data z.seq_pat_n;
+set seq_pat;
+rename count=n_rest;
+if trt=1 then criteria="ENROLMENT - Discontinuation";
+if trt=0 then criteria="ENROLMENT - Continuation";
+drop percent;
+run;
+
+%MACRO XXX;
+%do trial_no=1 %to 20;
+
+%let data_list=x.excl_gold_0 x.excl_gold_1 x.excl_gold_4 x.excl_gold_5 x.excl_gold_6 x.excl_gold_7 x.excl_gold_8;
+%do data_n=1 %to %sysfunc(countw(&data_list., %str( ),q));
+%let data_nm=%scan(&data_list., &data_n., %str( ),q);
+
+%let nn=%index(&data_nm.,.);
+%let data_nm_length=%eval(%length(&data_nm.) - &nn.);
+%let new_data=%substr(&data_nm., %eval(%length(&data_nm.) - &data_nm_length.)+1, &data_nm_length.);
+
+data &new_data.;
+set &data_nm.;
+if trial_id=&trial_no.;
+run;
+%end;
+
+%if &trial_no.=1 %then %do;
+%Flow (stt_data=y.cht_pat_gold
+, out_data=temp_flow
+, elig_data_list=excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8
+, id=patid
+); 
+%end;
+
+%else %do;
+data seq_pat_gold;
+set y.fin_wide_gold;
+if trial_id=%eval(&trial_no.-1) and trt=0;
+run; 
+
+%Flow (stt_data=seq_pat_gold
+, out_data=temp_flow
+, elig_data_list=excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8
+, id=patid
+); %end;
+
+data temp_flow_1;
+set temp_flow;
+trial_id=&trial_no.;
+run;
+
+data temp_flow_2;
+set z.seq_pat_n (drop=trt);
+if trial_id=&trial_no.;
+run;
+
+data temp_flow_3; set temp_flow_1 temp_flow_2; run;
+data flow_gold_&trial_no.; set temp_flow_3; run;
+
+/*proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8; run;*/
+%end;
+%MEND; %XXX;
+
+data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
+
+
+*Baseline characteristics;
+
+*Main analysis;
+**Weight: IPTW x IPCW;
+**Weighted cumulative incidence curve standardised to the distribution of the
+baseline variables in the study population;
+**Risk analysis: weighted pooled logistic regression model (pool the data from all sequential trials into a single model, including “trial
+indicator” as an adjustment variable);
+
+*Subgroup analysis: T2DM, dyslipidaemia, history of CVD;
+
+*Sensitivity analysis;
+
+*Missing data;
+
+*Others;
+**Reason of censoring;
 
