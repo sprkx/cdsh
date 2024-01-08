@@ -11,7 +11,9 @@ libname x "&path_work.\Temp"; *Temporary Data;
 libname y "&path_work.\Save"; *Data Set for Further Analysis;
 libname z "&path_work.\Output"; *Save Results for Export;
 
+/********************************************/
 /* Run the macro code (SAS_MACRO.sas) first */
+/********************************************/
 
 /***************************/
 /* Disease, drug code list */
@@ -1871,7 +1873,7 @@ run;
 data temp_flow_3; set temp_flow_1 temp_flow_2; run;
 data flow_gold_&trial_no.; set temp_flow_3; run;
 
-/*proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8; run;*/
+proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8; run;
 %end;
 %MEND; %XXX;
 
@@ -1879,15 +1881,20 @@ data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
 
 *Propensity score: IPTW, truncated at the 99.5th percentile to avoid outliers;
 proc logistic data=y.fin_wide_gold desc;
-class trt cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
-model trt=cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+class trt cov_base_demo_2 - cov_base_demo_7 cov_base_bp 
+cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_22 cov_base_dx_24 
+cov_base_rx_1 - cov_base_rx_22;
+model trt=cov_base_demo_1 - cov_base_demo_8 cov_base_bp 
+cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_22 cov_base_dx_24 
+cov_base_rx_1 - cov_base_rx_22;
 output out=ps_1 prob=prob;
-run;
+run;*Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _23 (Parkinson);
 data ps_2;
 set ps_1;
 if trt=1 then iptw=1/prob;
 else if trt=0 then iptw=1/(1-prob);
 run;
+data y.fin_wide_wt; set ps_2;
 proc rank data=ps_2 out=ps_3 groups=1000;
 var iptw;
 ranks rank;
@@ -1897,78 +1904,203 @@ set ps_3;
 if rank+1 < 995;
 run;
 /*proc sort data=ps_4; by descending rank; run;*/
-data y.fin_wide_w_gold; set ps_4; run;
+data y.fin_wide_wt_trunc; set ps_4; run;
 
 *Baseline characteristics;
-%Table1 (in_for_table1=y.fin_wide_gold
+%Table1 (in_for_table1=y.fin_wide_wt
 , treatment_var=trt
 , categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
 , continuous_var_list=cov_base_demo_1 cov_base_demo_8
 , weight=dummy_weight
 , out_table1=z.char_crude);
-%Table1 (in_for_table1=y.fin_wide_w_gold
+%Table1 (in_for_table1=y.fin_wide_wt_trunc
 , treatment_var=trt
 , categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
 , continuous_var_list=cov_base_demo_1 cov_base_demo_8
 , weight=dummy_weight
-, out_table1=z.char_crude_truncated);
-%Table1 (in_for_table1=y.fin_wide_w_gold
+, out_table1=z.char_crude_trunc);
+%Table1 (in_for_table1=y.fin_wide_wt_trunc
 , treatment_var=trt
 , categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
 , continuous_var_list=cov_base_demo_1 cov_base_demo_8
 , weight=iptw
 , out_table1=z.char_weight);
 
-*Weighted cumulative incidence curve standardised to the distribution of the baseline variables in the study population;
-**Number at risk;
-%MACRO XXX;
-%do i=1 %to 6;
-%AtRisk (in_data=y.fin_wide_w_gold, out_data=atrisk_&i., outcome=out&i., exposure_var=trt
-, fu_stt_var=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt), note=main_out&i.);
-%end;
-%MEND; %XXX;
-data z.atrisk; set atrisk_1 - atrisk_6; run;
-
-**Follow-up;
-%MACRO XXX /minoperator;
-data temp;
-set y.fin_wide_w_gold;
-format fu_end_dt yymmdd10.;
+*Follow-up data;
+%MACRO fu_data (in_data=, out_data=) /minoperator;
+data temp_fu;
+set &in_data.;
+format fu_end_dt yymmdd10. roc1 - roc6 $8.;
 fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt);
 %do out_i=1 %to 6;
-t&out_i.= min(out&out_i._dt, fu_end_dt
-	%if &out_i. in (2 3 4) %then %do;
-	, out1_dt
-	%end;
-) - enrol_dt;
-if out&out_i._dt^="." and out&out_i._dt= min(out&out_i._dt, fu_end_dt
-	%if &out_i. in (2 3 4) %then %do;
-	, out1_dt
-	%end;
-) then out&out_i.=1; 
+%if (&out_i.=1 or &out_i.=5 or &out_i.=6) %then %do;
+t&out_i.= min(out&out_i._dt, fu_end_dt)-enrol_dt;
+if out&out_i._dt^="." and out&out_i._dt= min(out&out_i._dt, fu_end_dt) then out&out_i.=1; 
 else do; 
 	out&out_i.=0;
 	if fu_end_dt=cens1_dt then roc&out_i.="censor1";
-	%if &out_i. in (2 3 4) %then %do;
-		else if fu_end_dt=out1_dt then roc&out_i.="MACE";
-	%end;
 	else if fu_end_dt=cens2_dt then roc&out_i.="censor2";
 	else if fu_end_dt=cens3_dt then roc&out_i.="censor3";
 	else if fu_end_dt=cens4_dt then roc&out_i.="censor4";
 end;
 %end;
+
+%if (&out_i.=2 or &out_i.=3 or &out_i.=4) %then %do;
+t&out_i.= min(out&out_i._dt, fu_end_dt, out1_dt) - enrol_dt;
+if out&out_i._dt^="." and out&out_i._dt= min(out&out_i._dt, fu_end_dt, out1_dt) then out&out_i.=1; 
+else do; 
+	out&out_i.=0;
+	if out1_dt^=. and out1_dt <= fu_end_dt then roc&out_i.="MACE";
+	else if fu_end_dt=cens1_dt then roc&out_i.="censor1";
+	else if fu_end_dt=cens2_dt then roc&out_i.="censor2";
+	else if fu_end_dt=cens3_dt then roc&out_i.="censor3";
+	else if fu_end_dt=cens4_dt then roc&out_i.="censor4";
+end;
+%end;
+%end;
 rename trt=exposure;
 run;
-%MEND; %XXX;
-data temp_2;
-set temp;
-keep exposure t1 out1 roc1 t2 out2 roc2 t3 out3 roc3 t4 out4 roc4 t5 out5 roc5 t6 out6 roc6 iptw;
-run;
-data z.fu_itt_gold; set temp_2; run;
 
-**Curve;
+data &out_data.;
+set temp_fu;
+keep exposure patid trial_id fu_end_dt t1 out1 roc1 t2 out2 roc2 t3 out3 roc3 t4 out4 roc4 t5 out5 roc5 t6 out6 roc6 iptw;
+run;
+%MEND;
+%fu_data (in_data=y.fin_wide_wt, out_data=y.fu_itt_all);
+%fu_data (in_data=y.fin_wide_wt_trunc, out_data=y.fu_itt_trunc);
+/*proc freq data=y.fu_itt_all;*/
+/*table roc1 roc2 roc3 roc4 roc5 roc6; */
+/*run;*/
+
+*Weighted cumulative incidence curve standardised to the distribution of the baseline variables in the study population;
+proc product_status; run;
 
 *Main risk analysis: weighted pooled logistic regression model (pool the data from all sequential trials into a single model, including “trial indicator” as an adjustment variable);
+%MACRO RiskAnalysis (in_data_crude=, in_data_adjust=
+, outcome=, group=, fu_time=, weight=
+, whycensor=, reason_censor=, out_data_whycensor=
+, out_data=, output_trt0=, output_trt1=
+, note=
+);
+data temp_crude;
+set &in_data_crude.;
+rename &outcome.=outcome &group.=exposure &fu_time.=fu_day;
+%if &whycensor.=Y %then %do; rename &reason_censor.=reason; %end;
+run;
+data temp_adjust;
+set &in_data_adjust.;
+rename &outcome.=outcome &group.=exposure &fu_time.=fu_day;
+%if &whycensor.=Y %then %do; rename &reason_censor.=reason; %end;
+dummy_weight=1;
+run;
+
+**Number of patients and events;
+proc freq data=temp_crude;
+tables outcome * exposure / norow nocol nopercent;
+ods output CrossTabFreqs=crude_freq;
+run;
+proc freq data=temp_adjust;
+tables outcome * exposure / norow nocol nopercent;
+weight &weight.;
+ods output CrossTabFreqs=adjust_freq;
+run;
+
+**Follow-up;
+proc tabulate data=temp_crude out=crude_fu;
+var fu_day;
+class exposure;
+tables (fu_day)*(sum mean std median q1 q3 min max), (exposure);
+run;
+proc tabulate data=temp_adjust out=adjust_fu;
+var fu_day /weight=&weight.;
+class exposure;
+tables (fu_day)*(sum mean std median q1 q3 min max), (exposure);
+run;
+
+**Reason of censoring;
+%if &whycensor.=Y %then %do;
+proc tabulate data=temp_crude out=censor_1;
+class exposure reason;
+tables (all reason)*(N), (exposure);
+run;
+proc tabulate data=temp_adjust out=censor_2;
+class exposure reason;
+var &weight.;
+tables (all reason)*(sum*&weight.), (exposure);
+proc sql;
+create table &out_data_whycensor. as
+select distinct a.exposure, "&note." as Note length=30, a.reason, a.N as N_crude, b.iptw_sum as N_adjust format 8.1
+from censor_1 as a
+left join censor_2 as b on a.exposure=b.exposure and a.reason=b.reason
+;quit; 
+run;
+%end;
+
+**Pooled logistic regression model;
+proc logistic data=temp_crude;
+model outcome=exposure;
+ods output OddsRatios=crude_risk;
+run;
+proc logistic data=temp_adjust;
+class trial_id;
+model outcome=exposure trial_id;
+weight iptw;
+ods output OddsRatios=adjust_risk;
+run;
+
+proc sql;
+create table temp_rst as
+select distinct 
+	a.exposure as trt format 1.
+	, (case when a.exposure=0 then "&output_trt0." else "&output_trt1." end) as Treatment
+	, b.frequency as Patients_c label=""
+	, c.frequency as Events_c label=""
+	, d.fu_day_mean as MeanFU_c label="" format 8.1
+	, e.OddsRatioEst as cOR label=""
+	, e.LowerCL as cOR_Lower label=""
+	, e.UpperCL as cOR_Upper label=""
+	, f.frequency as Patients_a label="" format 8.1
+	, g.frequency as Events_a label="" format 8.1
+	, h.fu_day_mean as MeanFU_a label="" format 8.1
+	, i.OddsRatioEst as aOR label=""
+	, e.LowerCL as aOR_Lower label=""
+	, e.UpperCL as aOR_Upper label=""
+	, "&note." as Note length=30
+from crude_fu as a
+left join crude_freq as b on a.exposure=b.exposure and b.outcome not in (0,1)
+left join crude_freq as c on a.exposure=c.exposure and c.outcome=1
+left join crude_fu as d on a.exposure=d.exposure
+left join crude_risk as e on a.exposure=1
+left join adjust_freq as f on a.exposure=f.exposure and f.outcome not in (0,1)
+left join adjust_freq as g on a.exposure=g.exposure and g.outcome=1
+left join adjust_fu as h on a.exposure=h.exposure
+left join adjust_risk as i on a.exposure=1 and i.effect="exposure"
+;quit;
+proc sort data=temp_rst; by descending trt; run;
+data &out_data.; set temp_rst; run;
+
+proc delete data=temp_rst censor_1 censor_2 adjust_freq adjust_fu adjust_risk crude_freq crude_fu crude_risk temp_adjust temp_crude; run;
+%MEND;
+
+%MACRO XXX;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do i=1 %to 6;
+%let output_outcome=%scan(&outcome_list.,&i.);
+%RiskAnalysis (
+in_data_crude=y.fu_itt_all, in_data_adjust=y.fu_itt_trunc
+, outcome=out&i., group=exposure, fu_time=t&i., weight=iptw
+, whycensor=Y, reason_censor=roc&i., out_data_whycensor=whycensor_&i.
+, out_data=rst_&i., output_trt0=Continuation, output_trt1=Switching
+, note=ITT_&output_outcome.
+);
+%end;
+%MEND; %XXX;
+
+data z.rst_itt; set rst_1 - rst_6; run;
+data z.whycensor_itt; set whycensor_1 - whycensor_6; run;
+
+
+
 
 
 *Per-protocol analysis;
