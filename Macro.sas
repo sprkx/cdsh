@@ -61,7 +61,7 @@ where patid in (select patid from &data_list.)
 ;
 quit;
 %MEND;
-%MACRO Flow (stt_data=, out_data=, elig_data_list=, id=);
+%MACRO FLOW (stt_data=, out_data=, elig_data_list=, id=);
 data temp_0; set &stt_data.; run;
 
 proc sql;
@@ -131,7 +131,7 @@ inner join &info_data. as b on a.patid=b.patid and a.enrol_dt + &assmnt_period1.
 where b.type_id="&assmnt_id."
 ;quit;
 %MEND;
-%MACRO Table1 (in_for_table1= , treatment_var= , categorical_var_list= , continuous_var_list= , weight=dummy_weight, out_table1= ); 
+%MACRO TABLE1 (in_for_table1= , treatment_var= , categorical_var_list= , continuous_var_list= , weight=dummy_weight, out_table1= ); 
 * we dont need to see each 2 by 2 table or proc means output, so suppressing it. this information is saved as sas datasets 
 and provided in excel format later; 
 
@@ -396,3 +396,55 @@ proc datasets lib=work nolist;
 quit;
 run;
 %MEND;
+%MACRO PLOT (type=, in_data=, out_surv_data=, rst_test=
+, outcome_var=, group_var=, weight=
+, fu_var=, fu_max=, fu_inc=, y_max=
+, line_thickness= , file_name=, format=, note=);
+
+data temp_1;
+set &in_data.;
+dummy_weight=1;
+run;
+
+%if &type.=ci %then %do;
+%let y_axis=_1_SURVIVAL_;
+%let y_label=Cumulative Incidence;
+proc lifetest data=temp_1 plots=survival(f)
+outsurv=survival_data timelist=(0 to &fu_max. by &fu_inc.) reduceout;
+strata &group_var.;
+time &fu_var.*&outcome_var.(0);
+weight &weight.;
+ods output failureplot=temp_2 HomTests=temp_test;
+run;
+%end;
+
+%else %if &type.=km %then %do;
+%let y_axis=SURVIVAL;
+%let y_label=Survival Probability;
+proc lifetest data=temp_1 plots=survival
+outsurv=survival_data timelist=(0 to &fu_max. by &fu_inc.) reduceout;
+strata &group_var.;
+time &fu_var.*&outcome_var.(0);
+weight &weight.;
+ods output survivalplot=temp_2 HomTests=temp_test;
+run;
+%end;
+
+ods graphics / reset imagename="&file_name." imagefmt=&format.;
+proc sgplot data=temp_2;
+step x=time y=&y_axis./group=stratum lineattrs=(pattern=1 thickness=&line_thickness.);
+xaxis values=(0 to &fu_max. by &fu_inc.) valueshint label="Time to event";
+yaxis offsetmin=0.02 min=0 offsetmax=0.1 max=&y_max. label="&y_label.";
+run;
+
+data &out_surv_data.;
+set temp_2;
+note="&note.";
+run;
+data &rst_test.;
+set temp_test; 
+note="&note.";
+run;
+proc delete data=temp_1 temp_2 temp_test; run;
+%MEND;
+
