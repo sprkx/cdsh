@@ -1972,9 +1972,6 @@ run;
 /*table roc1 roc2 roc3 roc4 roc5 roc6; */
 /*run;*/
 
-*Weighted cumulative incidence curve standardised to the distribution of the baseline variables in the study population;
-proc product_status; run;
-
 *Main risk analysis: weighted pooled logistic regression model (pool the data from all sequential trials into a single model, including “trial indicator” as an adjustment variable);
 %MACRO RiskAnalysis (in_data_crude=, in_data_adjust=
 , outcome=, group=, fu_time=, weight=
@@ -2099,11 +2096,25 @@ in_data_crude=y.fu_itt_all, in_data_adjust=y.fu_itt_trunc
 data z.rst_itt; set rst_1 - rst_6; run;
 data z.whycensor_itt; set whycensor_1 - whycensor_6; run;
 
-
-
-
+*Weighted cumulative incidence curve standardised to the distribution of the baseline variables in the study population;
+ods graphics on;
+ods listing gpath='E:\DataAnalysis\DiscSod\Output';
+%MACRO XXX;
+%do i=1 %to 6;
+%Plot (
+type=ci, in_data=y.fu_itt_trunc, out_surv_data=surv_&i., rst_test=test_out&i.
+, outcome_var=out&i., group_var=exposure, weight=iptw
+, fu_var=t&i., fu_max=1095.75, fu_inc=30.5, y_max=1.0, line_thickness=1
+, file_name=CI_itt_out&i., format=png, note=ITT_out&i.
+);
+%end;
+%MEND; %XXX;
+data z.surv_itt; set surv_1 - surv_6; run;
+data z.test_itt; set test_out1 - test_out6; run;
+ods _all_ close;
 
 *Per-protocol analysis;
+
 /**IPCW for per protocol analysis;*/
 /*data temp;*/
 /*set y.fin_long_gold; */
@@ -2125,8 +2136,4 @@ data z.whycensor_itt; set whycensor_1 - whycensor_6; run;
 
 *Sensitivity analysis;
 
-*Missing data;
-
-*Others;
-**Reason of censoring;
 
