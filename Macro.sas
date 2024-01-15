@@ -61,6 +61,15 @@ where patid in (select patid from &data_list.)
 ;
 quit;
 %MEND;
+%MACRO Eligible (in_data=, out_data=, info_data=, assmnt_period1=, assmnt_period2=, assmnt_id=);
+proc sql;
+create table &out_data. as
+select distinct a.*, b.eventdate, b.type_id
+from &in_data. as a
+inner join &info_data. as b on a.patid=b.patid and a.enrol_dt + &assmnt_period1. <= b.eventdate <= a.enrol_dt + &assmnt_period2.
+where b.type_id="&assmnt_id."
+;quit;
+%MEND;
 %MACRO FLOW (stt_data=, out_data=, elig_data_list=, id=);
 data temp_0; set &stt_data.; run;
 
@@ -122,14 +131,32 @@ data excl; set excl_1 - excl_&i.; run;
 data temp_3; merge rest excl; run;
 data &out_data.; set rest_0 temp_3; run; 
 %MEND;
-%MACRO Eligible (in_data=, out_data=, info_data=, assmnt_period1=, assmnt_period2=, assmnt_id=);
-proc sql;
-create table &out_data. as
-select distinct a.*, b.eventdate, b.type_id
-from &in_data. as a
-inner join &info_data. as b on a.patid=b.patid and a.enrol_dt + &assmnt_period1. <= b.eventdate <= a.enrol_dt + &assmnt_period2.
-where b.type_id="&assmnt_id."
-;quit;
+%MACRO IPTW (in_data=, group_var=, varlist_cont=, varlist_cate=
+, truncate_max=, truncate_min=, weight_var=
+, out_data_all=, out_data_trunc=);
+
+proc logistic data=&in_data. desc;
+class &group_var. &varlist_cate.;
+model &group_var.=&varlist_cont. &varlist_cate.;
+output out=ps_1 prob=prob;
+run;*Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _23 (Parkinson);
+data ps_2;
+set ps_1;
+if &group_var.=1 then &weight_var.=1/prob;
+else if &group_var.=0 then &weight_var.=1/(1-prob);
+run;
+data &out_data_all.; set ps_2;
+proc rank data=ps_2 out=ps_3 groups=1000;
+var &weight_var.;
+ranks rank;
+run;
+data ps_4;
+set ps_3;
+if &truncate_min.*1000 < rank+1 and rank+1 < &truncate_max.*1000;
+run;
+/*proc sort data=ps_4; by descending rank; run;*/
+data &out_data_trunc.; set ps_4; run;
+proc delete data=ps_1 - ps_4; run;
 %MEND;
 %MACRO TABLE1 (in_for_table1= , treatment_var= , categorical_var_list= , continuous_var_list= , weight=dummy_weight, out_table1= ); 
 * we dont need to see each 2 by 2 table or proc means output, so suppressing it. this information is saved as sas datasets 
@@ -396,6 +423,156 @@ proc datasets lib=work nolist;
 quit;
 run;
 %MEND;
+%MACRO fu_data (in_data=, out_data=) /minoperator;
+data temp_fu;
+set &in_data.;
+format fu_end_dt yymmdd10. roc1 - roc6 $8.;
+fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt);
+%do out_i=1 %to 6;
+%if (&out_i.=1 or &out_i.=5 or &out_i.=6) %then %do;
+t&out_i.= min(out&out_i._dt, fu_end_dt)-enrol_dt;
+if out&out_i._dt^="." and out&out_i._dt= min(out&out_i._dt, fu_end_dt) then out&out_i.=1; 
+else do; 
+	out&out_i.=0;
+	if fu_end_dt=cens1_dt then roc&out_i.="censor1";
+	else if fu_end_dt=cens2_dt then roc&out_i.="censor2";
+	else if fu_end_dt=cens3_dt then roc&out_i.="censor3";
+	else if fu_end_dt=cens4_dt then roc&out_i.="censor4";
+end;
+%end;
+
+%if (&out_i.=2 or &out_i.=3 or &out_i.=4) %then %do;
+t&out_i.= min(out&out_i._dt, fu_end_dt, out1_dt) - enrol_dt;
+if out&out_i._dt^="." and out&out_i._dt= min(out&out_i._dt, fu_end_dt, out1_dt) then out&out_i.=1; 
+else do; 
+	out&out_i.=0;
+	if out1_dt^=. and out1_dt <= fu_end_dt then roc&out_i.="MACE";
+	else if fu_end_dt=cens1_dt then roc&out_i.="censor1";
+	else if fu_end_dt=cens2_dt then roc&out_i.="censor2";
+	else if fu_end_dt=cens3_dt then roc&out_i.="censor3";
+	else if fu_end_dt=cens4_dt then roc&out_i.="censor4";
+end;
+%end;
+%end;
+rename trt=exposure;
+run;
+
+data &out_data.;
+set temp_fu;
+keep exposure patid trial_id fu_end_dt t1 out1 roc1 t2 out2 roc2 t3 out3 roc3 t4 out4 roc4 t5 out5 roc5 t6 out6 roc6 iptw;
+run;
+proc delete data=temp_fu; run;
+%MEND;
+%MACRO RiskAnalysis (in_data_crude=, in_data_adjust=
+, outcome=, group=, fu_time=, weight=
+, adj_varlist_cate= , adj_varlist_cont=
+, out_data=, output_trt0=, output_trt1=
+, whycensor=, reason_censor=, out_data_whycensor=
+, note=
+);
+
+data temp_crude;
+set &in_data_crude.;
+rename &outcome.=outcome &group.=exposure &fu_time.=fu_day;
+%if &whycensor.=Y %then %do; rename &reason_censor.=reason; %end;
+run;
+data temp_adjust;
+set &in_data_adjust.;
+rename &outcome.=outcome &group.=exposure &fu_time.=fu_day;
+%if &whycensor.=Y %then %do; rename &reason_censor.=reason; %end;
+dummy_weight=1;
+run;
+
+**Number of patients and events;
+proc freq data=temp_crude;
+tables outcome * exposure / norow nocol nopercent;
+ods output CrossTabFreqs=crude_freq;
+run;
+proc freq data=temp_adjust;
+tables outcome * exposure / norow nocol nopercent;
+weight &weight.;
+ods output CrossTabFreqs=adjust_freq;
+run;
+
+**Follow-up;
+proc tabulate data=temp_crude out=crude_fu;
+var fu_day;
+class exposure;
+tables (fu_day)*(sum mean std median q1 q3 min max), (exposure);
+run;
+proc tabulate data=temp_adjust out=adjust_fu;
+var fu_day /weight=&weight.;
+class exposure;
+tables (fu_day)*(sum mean std median q1 q3 min max), (exposure);
+run;
+
+**Reason of censoring;
+%if &whycensor.=Y %then %do;
+proc tabulate data=temp_crude out=censor_1;
+class exposure reason;
+tables (all reason)*(N), (exposure);
+run;
+proc tabulate data=temp_adjust out=censor_2;
+class exposure reason;
+var &weight.;
+tables (all reason)*(sum*&weight.), (exposure);
+proc sql;
+create table &out_data_whycensor. as
+select distinct a.exposure, "&note." as Note length=30, a.reason, a.N as N_crude, b.&weight._sum as N_adjust format 8.1
+from censor_1 as a
+left join censor_2 as b on a.exposure=b.exposure and a.reason=b.reason
+;quit; 
+run;
+%end;
+
+**Pooled logistic regression model;
+proc genmod data=temp_crude descending;
+class exposure (ref='0');
+model outcome=exposure/link=logit dist=bin;
+lsmeans exposure / ilink exp oddsratio diff cl;
+ods output Diffs=crude_risk;
+run;
+proc genmod data=temp_adjust descending;
+class exposure (ref='0') &adj_varlist_cate.;
+model outcome=exposure &adj_varlist_cate./link=logit dist=bin;
+lsmeans exposure/ ilink exp oddsratio diff cl;
+weight &weight.;
+ods output Diffs=adjust_risk;
+run;
+
+proc sql;
+create table temp_rst as
+select distinct 
+	a.exposure as trt format 1.
+	, (case when a.exposure=0 then "&output_trt0." else "&output_trt1." end) as Treatment
+	, b.frequency as Patients_c label=""
+	, c.frequency as Events_c label=""
+	, d.fu_day_mean as MeanFU_c label="" format 8.1
+	, e.OddsRatio as cOR label=""
+	, e.LowerOR as cOR_Lower label=""
+	, e.UpperOR as cOR_Upper label=""
+	, f.frequency as Patients_a label="" format 8.1
+	, g.frequency as Events_a label="" format 8.1
+	, h.fu_day_mean as MeanFU_a label="" format 8.1
+	, i.OddsRatio as aOR label=""
+	, e.LowerOR as aOR_Lower label=""
+	, e.UpperOR as aOR_Upper label=""
+	, "&note." as Note length=30
+from crude_fu as a
+left join crude_freq as b on a.exposure=b.exposure and b.outcome not in (0,1)
+left join crude_freq as c on a.exposure=c.exposure and c.outcome=1
+left join crude_fu as d on a.exposure=d.exposure
+left join crude_risk as e on a.exposure=1
+left join adjust_freq as f on a.exposure=f.exposure and f.outcome not in (0,1)
+left join adjust_freq as g on a.exposure=g.exposure and g.outcome=1
+left join adjust_fu as h on a.exposure=h.exposure
+left join adjust_risk as i on a.exposure=1
+;quit;
+proc sort data=temp_rst; by descending trt; run;
+data &out_data.; set temp_rst; run;
+
+proc delete data=temp_rst censor_1 censor_2 adjust_freq adjust_fu adjust_risk crude_freq crude_fu crude_risk temp_adjust temp_crude; run;
+%MEND;
 %MACRO PLOT (type=, in_data=, out_surv_data=, rst_test=
 , outcome_var=, group_var=, weight=
 , fu_var=, fu_max=, fu_inc=, y_max=
@@ -447,4 +624,3 @@ note="&note.";
 run;
 proc delete data=temp_1 temp_2 temp_test; run;
 %MEND;
-
