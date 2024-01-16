@@ -5,6 +5,7 @@ option compress=yes;
 %let path_work=E:\DataAnalysis\DiscSod;
 /*%let path_work=\\Client\E$\DataAnalysis\DiscSod;*/
 
+libname cprd "E:\Data\CPRD_GOLD_202307";
 libname a "&path_work.\Input"; *Input;
 libname b "E:\Data\Resources"; *Dictionary, Sources;
 libname x "&path_work.\Temp"; *Temporary Data;
@@ -301,7 +302,7 @@ quit;
 
 data temp_3;
 set b.dict_rx_comb_gold;
-if (find(term, "calcium carbonate")>0);
+if (find(term, "calcium carbonate")>0 or find(term, "calcium gluconate")>0 or find(term, "calcium lactate")>0);
 run;
 proc sql;
 create table rx_sod_gd_4 as
@@ -309,7 +310,6 @@ select distinct a.type_id, a.info, a.ingr, b.prodcode as code, b.term, "gold" as
 from rx_sod_0 as a
 left join temp_3 as b on a.ingr="calcium";
 quit;
-
 data rx_sod_gd_5; 
 set rx_sod_gd_1 rx_sod_gd_2 rx_sod_gd_3 rx_sod_gd_4; 
 if code="" then delete;
@@ -372,7 +372,7 @@ quit;
 
 data temp_3;
 set b.dict_rx_comb_aurum;
-if (find(term, "calcium carbonate")>0);
+if (find(term, "calcium carbonate")>0 or find(term, "calcium gluconate")>0 or find(term, "calcium lactate")>0);
 run;
 proc sql;
 create table rx_sod_ar_4 as
@@ -534,6 +534,13 @@ path=&path_in., filename=hes_primary_diag_hosp_23_003198
 , delimiter='09'x
 );
 %IMPORT_TXT (
+path=&path_in., filename=hes_diagnosis_epi_23_003198
+, lib=a, data_name=gd_hes_dx_epi
+, var_name_list=patid	spno epikey epistart epiend	ICD	ICDx d_order
+, var_format_list=$20. 20. 20. ddmmyy10. ddmmyy10. $5. $5. 2.
+, delimiter='09'x
+);
+%IMPORT_TXT (
 path=&path_in., filename=hes_diagnosis_hosp_23_003198
 , lib=a, data_name=gd_hes_dx_hosp
 , var_name_list=patid	spno	admidate	discharged	ICD	ICDx
@@ -543,7 +550,7 @@ path=&path_in., filename=hes_diagnosis_hosp_23_003198
 
 
 *Gold: primary;
-**Extract from CPRD GOLD: patient,  clinical, additional, test, therapy;
+**Extract from CPRD GOLD: patient, practice, clinical, additional, test, therapy;
 %MACRO data_extraction (dataset_list=);
 %do dataset_i=1 %to %sysfunc(countw(&dataset_list., %str( ),q));
 %let dataset=%scan(&dataset_list., &dataset_i., %str( ),q);
@@ -555,8 +562,14 @@ remove_migrators=Y
 );
 %end;
 %MEND;
-%data_extraction (dataset_list=additional clinical patient test therapy);
-%data_extraction (dataset_list=consultation);
+%data_extraction (dataset_list=additional clinical patient test therapy consultation);
+proc sql;
+create table a.gd_practice as
+select *
+from cprd.practice
+where pracid in (select (substr(patid, length(patid)-4, 5)) from y.extpat_gold)
+	and pracid not in (select gold_pracid from b.prac_migrt)
+;quit;
 
 proc sql;
 create table temp_htn as
@@ -594,10 +607,11 @@ proc sql;
 create table temp as 
 select distinct a.*
 	, b.dod as death_dt, cause, cause1, cause2, cause3, cause4, cause5, cause6, cause7, cause8, cause9, cause10, cause11, cause12, cause13, cause14, cause15
-	, c.e2019_imd_10 as imd
+	, c.e2019_imd_10 as imd, d.lcd
 from y.all_pat_gold as a
 left join a.gd_death as b on a.patid=b.patid
 left join a.gd_prac_imd as c on substr(a.patid,length(a.patid)-5+1,5)=c.pracid
+left join a.gd_practice as d on substr(a.patid,length(a.patid)-5+1,5)=d.pracid
 ;quit; *24579 obs;
 data y.all_info_gold; set temp; run;
 
@@ -615,10 +629,12 @@ select distinct a.patid
 	, b.spno as visit_key, b.admidate as eventdate, b.discharged as hosp_dc_dt
 	, b.ICD as code
 	, c.ICD_Primary
+	, d.d_order as dx_order
 	, "hes" as code_sys
 from a.gd_hes_pat as a
 left join a.gd_hes_dx_hosp as b on a.patid=b.patid
 left join a.gd_hes_dx1st_hosp as c on a.patid=c.patid and b.spno=c.spno
+left join a.gd_hes_dx_epi as d on a.patid=d.patid and b.spno=d.spno and b.ICD=d.ICD
 where a.patid in (select patid from y.all_pat_gold)
 ;quit;
 
@@ -684,6 +700,7 @@ data x.incl_gold_0;
 set y.all_info_gold;
 if death_dt=. or htn_1st_dt < death_dt;
 if (tod=. or htn_1st_dt < tod);
+if (lcd=. or htn_1st_dt < lcd);
 run; *24512;
 
 proc sql;
@@ -701,13 +718,13 @@ inner join temp_sod as b on a.patid=b.patid
 		and (a.htn_1st_dt - 180 <= b.eventdate and b.eventdate < a.htn_1st_dt)
 group by b.patid, b.type_id
 having count(distinct b.eventdate)>1
-;quit; *16818 obs;
+;quit; *16818 > 16828 (calcium gluconate and lactate) obs;
 proc sql;
 create table temp_2 as
 select distinct patid, htn_1st_dt, type_id as index_tp
 from temp_1
 order by patid, index_tp
-;quit; *1894;
+;quit; *1894 > 1897 (calcium gluconate and lactate);
 data x.incl_gold_1; set temp_2; run;
 
 data x.incl_gold_2; 
@@ -722,19 +739,19 @@ from y.all_pat_gold as a
 inner join x.incl_gold_0 as b on a.patid=b.patid
 inner join x.incl_gold_1 as c on a.patid=c.patid
 inner join x.incl_gold_2 as d on a.patid=d.patid
-;quit; *1383 obs;
+;quit; *1383>1385 (calcium gluconate and lactate) obs;
 data y.cht_pat_gold; set temp; run;
 
 /*proc sql;*/
 /*select count(distinct patid)*/
 /*from y.cht_pat_gold*/
-/*;quit; *1364 individuals;*/
+/*;quit; *1366 individuals;*/
 
 %Flow (stt_data=a.gd_patient
 , out_data=test
 , elig_data_list=x.incl_pre_gold_0 x.incl_pre_gold_1 x.incl_pre_gold_2 x.incl_pre_gold_3 x.incl_gold_0 x.incl_gold_1 x.incl_gold_2
 , id=patid
-); *1364;
+); *1366;
 
 
 /*********************************************************************/
@@ -755,7 +772,7 @@ select distinct a.patid, a.htn_1st_dt, b.eventdate, b.type_id, b.dosageid, b.qty
 from y.cht_pat_gold as a 
 left join temp_1 as b on a.patid=b.patid 
 		and a.htn_1st_dt <= b.eventdate
-;quit; *121754 obs;
+;quit; *121754>121855(added calcium gluconate and calcium lactate) obs;
 data y.cht_trt_gold; set temp_2; run;
 
 *outcome; 
@@ -772,8 +789,8 @@ create table out_2 as
 select distinct a.patid, a.eventdate, a.code, a.code_sys, b.type_id
 from y.all_dx_gold as a
 inner join y.list_dx as b on (substr(a.code,1,3)=b.code or substr(a.code,1,5)=b.code) and a.code_sys=b.code_sys 
-where substr(b.type_id,1,3)="OUT" and b.code_sys="hes"
-;quit;
+where substr(b.type_id,1,3)="OUT" and b.code_sys="hes" and a.dx_order<=3
+;quit; *Only first 3 diagnoses for HES;
 data out_3; set out_1 out_2; run;
 proc sql;
 create table out_4 as
@@ -791,21 +808,15 @@ rename death_dt=eventdate;
 keep patid htn_1st_dt death_dt type_id;
 run;
 
-**cardiovascular death;
-%MACRO XXX;
+**cardiovascular death - primary cause of death;
 data out_6;
 set y.all_info_gold;
 if htn_1st_dt < death_dt;
-if substr(cause,1,1)="I"
-%do i=1 %to 15;
-or substr(cause&i.,1,1)="I"
-%end;
-;
+if substr(cause1,1,1)="I";
 type_id="OUT_4";
 rename death_dt=eventdate;
 keep patid htn_1st_dt death_dt type_id;
 run;
-%MEND; %XXX;
 
 data data y.cht_out_gold; set out_4 out_5 out_6; run;
 
@@ -853,7 +864,7 @@ if enttype=1 then do; data_tp="DBP"; output temp_5; end;
 if enttype=163 then do; data_tp="TC"; output temp_6; end;
 if enttype=175 then do; data_tp="HDL"; output temp_7; end;
 if enttype=177 then do; data_tp="LDL"; output temp_8; end;
-run; *1911045;
+run;
 
 data temp_9; 
 set temp_1 - temp_8; 
@@ -931,7 +942,7 @@ trial1=1;
 	if min(of enrol_prd1 - enrol_prd&i.)=0 then trial&b.=0; else trial&b.=1;
 %end;
 run;
-%MEND; %XXX; *1383 obs;
+%MEND; %XXX; *1383>1385 (calcium carbonate and lactate) obs;
 %MACRO XXX;
 proc sql;
 create table temp_4 as
@@ -942,7 +953,7 @@ select distinct patid, htn_1st_dt, index_tp
 from temp_3
 group by patid
 ;quit;
-%MEND; %XXX; *1383 obs;
+%MEND; %XXX;
 %MACRO XXX;
 %do i=1 %to 20;
 data temp_5_&i.;
@@ -961,7 +972,7 @@ data temp_6; set temp_5_1 - temp_5_20; run;
 data y.seq_pat_gold; 
 set temp_6; 
 patid2=_n_;
-run; *9833 obs;
+run; *9833 > 9836 (calcium carbonate and lactate) obs;
 
 
 /*********************************************/
@@ -974,7 +985,7 @@ create table x.excl_gold_0 as
 select distinct a.*, b.death_dt, b.tod
 from y.seq_pat_gold as a
 inner join y.all_info_gold as b on a.patid=b.patid 
-	and ((b.death_dt < a.enrol_dt and b.death_dt^=.) or (b.tod < a.enrol_dt and b.tod^=.))
+	and ((b.death_dt < a.enrol_dt and b.death_dt^=.) or (b.tod < a.enrol_dt and b.tod^=.) or (b.lcd < a.enrol_dt and b.lcd^=.))
 ;quit;
 
 %Eligible (in_data=y.seq_pat_gold, out_data=x.excl_gold_1, info_data=y.cht_elg_gold
@@ -1002,7 +1013,7 @@ select distinct *
 from y.seq_pat_gold
 where patid2 not in (select patid2 from x.excl_gold)
 order by patid, trial_id
-;quit; *7921 obs;
+;quit; *7921>7833 (calcium and lcd) obs;
 proc sql;
 create table temp_1 as
 select distinct a.* 
@@ -1013,7 +1024,7 @@ left join y.cht_trt_gold as b on a.patid=b.patid
 		and a.enrol_dt <= b.eventdate < a.enrol_dt + (365.25/12)*3
 		and substr(a.index_tp,7,1)=substr(b.type_id,7,1)
 group by a.patid, a.trial_id, a.index_tp
-;quit; *7871 obs;
+;quit; *7871>7833 (calcium and lcd) obs;
 /*proc sql;*/
 /*create table test as*/
 /*select distinct **/
@@ -1058,7 +1069,7 @@ left join y.cht_trt_gold as c on a.patid=c.patid
 left join y.cht_trt_gold as d on a.patid=d.patid 
 	and a.enrol_dt <= d.eventdate and substr(d.type_id,1,5)="SOD_0"
 group by a.patid, a.trial_id
-;quit; *7871 obs;
+;quit; *7871>7783 (calcium and lcd) obs;
 data x.excl_gold_7 x.excl_gold_8;
 set temp_4;
 if trt=9 then output x.excl_gold_7;
@@ -1070,7 +1081,7 @@ set temp_4;
 if trt=9 then delete;
 if enrol_dt <= outcome_dt and outcome_dt <=rx_1st_dt then delete;
 /*drop outcome_dt rx_1st_dt;*/
-run; *7304 obs;
+run; *7304>7297 (calcium and lcd) obs;
 data temp_6;
 set temp_5;
 by patid trial_id;
@@ -1095,7 +1106,7 @@ select distinct patid, enrol_dt, trial_id, trt
 from temp_6
 group by patid
 having min(trial_id)=1 and incl=min(incl)
-;quit; *6797 obs;
+;quit; *6797>6793 (calcium and lcd) obs;
 data y.seq_asgmt_gold; set temp_7; run;
 proc freq data=y.seq_asgmt_gold; table trial_id*trt/norow nocol nopercent; run;
 
@@ -1144,8 +1155,9 @@ proc sql;
 create table cens_1 as
 select distinct a.*, b.death_dt as cens1_dt format yymmdd10.
 		, b.tod as cens2_dt
-		, (a.enrol_dt+365.25*3) as cens3_dt format yymmdd10.
-		, mdy(12,31,2022) as cens4_dt format yymmdd10.
+		, b.lcd as cens3_dt
+		, (a.enrol_dt+365.25*3) as cens4_dt format yymmdd10.
+		, mdy(12,31,2022) as cens5_dt format yymmdd10.
 from y.seq_asgmt_gold as a 
 left join y.all_info_gold as b on a.patid=b.patid
 ;quit;
@@ -1185,7 +1197,7 @@ where a.trt=1
 /*;quit;*/
 proc sql;
 create table pp_5 as
-select distinct a.patid, a.trial_id, min(b.eventdate) as cens5_dt1 format yymmdd10.
+select distinct a.patid, a.trial_id, min(b.eventdate) as cens6_dt1 format yymmdd10.
 from pp_4 as a
 left join y.cht_trt_gold as b on a.patid=b.patid and a.enrol_dt <= b.eventdate 
 	and a.oth_index_tp^=b.type_id
@@ -1259,7 +1271,7 @@ having min(episode)=episode
 ;quit;
 proc sql;
 create table stnd_8 as
-select distinct patid, trial_id, min(trt_end_dt) as cens5_dt2 format yymmdd10.
+select distinct patid, trial_id, min(trt_end_dt) as cens6_dt2 format yymmdd10.
 from stnd_7
 group by patid, trial_id
 ;quit; 
@@ -1332,7 +1344,7 @@ having min(episode)=episode
 ;quit;
 proc sql;
 create table cont_8 as
-select distinct patid, trial_id, min(trt_end_dt) as cens5_dt2 format yymmdd10.
+select distinct patid, trial_id, min(trt_end_dt) as cens6_dt2 format yymmdd10.
 from cont_7
 group by patid, trial_id
 ;quit; 
@@ -1350,9 +1362,9 @@ left join x.seq_fu4_gold as f on a.patid=f.patid and a.trial_id=f.trial_id
 ;quit;
 data temp2;
 set temp;
-if enrol_dt > min(cens1_dt, cens2_dt, cens3_dt, cens4_dt) then delete;
-format cens5_dt yymmdd10.;
-cens5_dt=min(cens5_dt1, cens5_dt2);
+if enrol_dt > min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt) then delete;
+format cens6_dt yymmdd10.;
+cens6_dt=min(cens6_dt1, cens6_dt2);
 run;
 data y.seq_fu_gold; set temp2; run;
 
@@ -1755,9 +1767,9 @@ create table temp as
 select distinct a.*, d.htn_1st_dt
 	%do a=1 %to 6;
 	, b.out&a._dt %end;
-	%do b=1 %to 5;
+	%do b=1 %to 6;
 	, b.cens&b._dt %end;
-	, b.cens5_dt1, b.cens5_dt2
+	, b.cens6_dt1, b.cens6_dt2
 	%do c=1 %to 8; 
 	, c.cov_demo_&c. as cov_base_demo_&c. %end;
 	, c.cov_bp as cov_base_bp
@@ -1775,9 +1787,9 @@ data y.fin_wide_gold; set temp; run; *6788;
 
 %MACRO XXX;
 proc sql;
-create table temp as 
+create table temp_1 as 
 select distinct a.*, b.time_id, b.index_dt
-	%do a=1 %to 8; 
+	%do a=4 %to 8; 
 	, b.cov_demo_&a. as cov_tv_demo_&a. %end;
 	, b.cov_bp as cov_tv_bp
 	%do b=1 %to 24;
@@ -1787,8 +1799,8 @@ select distinct a.*, b.time_id, b.index_dt
 from y.fin_wide_gold as a 
 left join y.seq_cov_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
 ;quit;
-%MEND; %XXX;
-data y.fin_long_gold; set temp; run; *75424;
+%MEND; %XXX; *75424>68220 (calcium and lcd);
+data y.fin_long_gold; set temp_1; run;
 
 /**********************/
 /* Merge GOLD & Aurum */
@@ -1873,13 +1885,59 @@ proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 ex
 
 data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
 
-*Propensity score: IPTW, truncated at the 99.5th percentile to avoid outliers;
-%IPTW (in_data=y.fin_wide_gold, group_var=trt
-, varlist_cont=cov_base_demo_1 cov_base_demo_8 
-, varlist_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_22 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
-, truncate_min=0, truncate_max=99.5, weight_var=iptw
-, out_data_all=y.fin_wide_wt, out_data_trunc=y.fin_wide_wt_trunc);
-*Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _23 (Parkinson);
+*Weights: IPTW, IPCW;
+**probability of discontinuation;
+proc logistic data=y.fin_wide_gold descending;
+class trt cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+model trt(event='1')=cov_base_demo_1 cov_base_demo_8 cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+output out=model_1 prob=prob_1;
+run; *Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _22 (Schizophrenia), _23 (Parkinson);
+data temp_1 (drop=_level_ prob_1); 
+set model_1; 
+if trt=1 then iptw=1/prob_1;
+else if trt=0 then iptw=1/(1-prob_1);
+run;
+data y.fin_wide_wt; set temp_1; run;
+
+**probabaility of uncensoring;
+data temp;
+set y.fin_long_gold;
+format censor_dt yymmdd10.;
+censor_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt);
+if index_dt < censor_dt and censor_dt <= index_dt + (365.25/12)*3 then censor=1;
+else if censor_dt <= index_dt then delete;
+else censor=0;
+run;
+proc logistic data=temp;
+class censor cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 
+	  cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;
+model censor(event='0')=trt time_id time_id*time_id cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 
+cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;
+output out=model_2 prob=prob_2;
+run;
+proc sql;
+create table temp_2 as
+select distinct a.*, b.prob_1
+from model_2 as a
+left join model_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by patid, trial_id, time_id
+;quit;
+data temp_3 (drop=_level_);
+set temp_2;
+by patid trial_id time_id;
+if first.trial_id then do; prob_2_cp=1; end;
+retain prob_2_cp;
+prob_2_cp=prob_2_cp*prob_2;
+ipcw=1/prob_2_cp;
+if trt=1 then iptw=1/prob_1;
+else if trt=0 then iptw=1/(1-prob_1);
+run;
+data temp_4 (drop=prob_1 prob_2 prob_2_cp);
+set temp_3;
+w1=iptw;
+w2=iptw*ipcw;
+run;
+data y.fin_long_wt; set temp_4; run;
 
 *Baseline characteristics;
 %Table1 (in_for_table1=y.fin_wide_wt
@@ -1888,348 +1946,11 @@ data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
 , continuous_var_list=cov_base_demo_1 cov_base_demo_8
 , weight=dummy_weight
 , out_table1=z.char_crude);
-%Table1 (in_for_table1=y.fin_wide_wt_trunc
-, treatment_var=trt
-, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
-, continuous_var_list=cov_base_demo_1 cov_base_demo_8
-, weight=dummy_weight
-, out_table1=z.char_crude_trunc);
-%Table1 (in_for_table1=y.fin_wide_wt_trunc
-, treatment_var=trt
-, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
-, continuous_var_list=cov_base_demo_1 cov_base_demo_8
-, weight=iptw
-, out_table1=z.char_weight);
 
-*Follow-up data;
-%fu_data (in_data=y.fin_wide_wt, out_data=y.fu_itt_all);
-%fu_data (in_data=y.fin_wide_wt_trunc, out_data=y.fu_itt_trunc);
-/*proc freq data=y.fu_itt_all;*/
-/*table roc1 roc2 roc3 roc4 roc5 roc6; */
-/*run;*/
+*Risk analysis;
 
-*Main risk analysis: weighted pooled logistic regression model (pool the data from all sequential trials into a single model, including “trial indicator” as an adjustment variable);
-%MACRO XXX;
-%let outcome_list=MACE MI Stroke CVdeath HHF Death;
-%do i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&i.);
-%RiskAnalysis (
-in_data_crude=y.fu_itt_all, in_data_adjust=y.fu_itt_trunc
-, adj_varlist_cate=trial_id, adj_varlist_cont=
-, outcome=out&i., group=exposure, fu_time=t&i., weight=iptw
-, out_data=rst_&i., output_trt0=Continuation, output_trt1=Switching
-, note=ITT_&output_outcome.
-, whycensor=Y, reason_censor=roc&i., out_data_whycensor=whycensor_&i.
-);
-%end;
-%MEND; %XXX;
-data z.rst_itt; set rst_1 - rst_6; run;
-data z.whycensor_itt; set whycensor_1 - whycensor_6; run;
-/*data temp_crude;*/
-/*set y.fu_itt_all;*/
-/*rename out1=outcome t1=fu_day;*/
-/*run;*/
-/*data temp_adjust;*/
-/*set y.fu_itt_trunc;*/
-/*rename out1=outcome t1=fu_day;*/
-/*run;*/
-/*proc genmod data=temp_crude descending;*/
-/*class exposure (ref='0');*/
-/*model outcome=exposure/link=logit dist=bin;*/
-/*lsmeans exposure / ilink exp oddsratio diff cl;*/
-/*ods output Diffs=crude_risk_genmod;*/
-/*run;*/
-/*proc genmod data=temp_adjust descending;*/
-/*class exposure (ref='0') trial_id;*/
-/*model outcome=exposure trial_id/link=logit dist=bin;*/
-/*lsmeans exposure/ ilink exp oddsratio diff cl;*/
-/*weight iptw;*/
-/*ods output Diffs=adjust_risk_genmod;*/
-/*run;*/
-
-
-*Weighted cumulative incidence curve standardised to the distribution of the baseline variables in the study population;
-ods graphics on;
-ods listing gpath='E:\DataAnalysis\DiscSod\Output';
-%MACRO XXX;
-%do i=1 %to 6;
-%Plot (
-type=ci, in_data=y.fu_itt_trunc, out_surv_data=surv_&i., rst_test=test_out&i.
-, outcome_var=out&i., group_var=exposure, weight=iptw
-, fu_var=t&i., fu_max=1095.75, fu_inc=30.5, y_max=1.0, line_thickness=1
-, file_name=CI_itt_out&i., format=png, note=ITT_out&i.
-);
-%end;
-%MEND; %XXX;
-data z.surv_itt; set surv_1 - surv_6; run;
-data z.test_itt; set test_out1 - test_out6; run;
-ods _all_ close;
-
-*Subgroup analysis: T2DM, dyslipidaemia, history of CVD;
-data subgrp;
-set y.fin_wide_gold;
-subgrp_1=cov_base_dx_9;
-subgrp_2=cov_base_dx_7;
-subgrp_3=max(of cov_base_dx_1 - cov_base_dx_6);
+data temp_crude;
+set y.fin_long_wt;
+rename &outcome.=outcome &group.=exposure;
 run;
-
-%MACRO XXX;
-%let count_i=1;
-%let subgroup_list=T2DM Dyslipidaemia HistoryCVD;
-%do subgrp_i=1 %to 3;
-%let subgroup_name=%scan(&subgroup_list.,&subgrp_i.);
-%do subgrp_value=0 %to 1;
-
-data subgrp_temp;
-set subgrp;
-if subgrp_&subgrp_i.=&subgrp_value.;
-run;
-
-%IPTW (in_data=subgrp_temp, group_var=trt
-, varlist_cont=cov_base_demo_1 cov_base_demo_8 
-, varlist_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_22 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
-, truncate_min=0, truncate_max=99.5, weight_var=iptw
-, out_data_all=subgrp_wt_all, out_data_trunc=subgrp_wt_trunc); *Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _23 (Parkinson);
-%fu_data (in_data=subgrp_wt_all, out_data=fu_subgrp_all);
-%fu_data (in_data=subgrp_wt_trunc, out_data=fu_subgrp_trunc);
-
-%let outcome_list=MACE MI Stroke CVdeath HHF Death;
-%do i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&i.);
-%RiskAnalysis (
-in_data_crude=fu_subgrp_all, in_data_adjust=fu_subgrp_trunc
-, adj_varlist_cate=trial_id, adj_varlist_cont=
-, outcome=out&i., group=exposure, fu_time=t&i., weight=iptw
-, out_data=rst_&count_i., output_trt0=Continuation, output_trt1=Switching
-, note=&subgroup_name._&subgrp_value._&output_outcome.
-, whycensor=N, reason_censor=, out_data_whycensor=
-);
-%let count_i=%eval(&count_i.+1);
-%end; 
-proc delete data=subgrp_wt_all subgrp_wt_trunc fu_subgrp_all fu_subgrp_trunc; run;
-%end; %end;
-proc delete data=subgrp_temp; run;
-%MEND; %XXX;
-data z.rst_subgroup; set rst_1 - rst_36; run;
-%MACRO XXX; %do i=1 %to 36; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
-
-*Sensitivity analysis;
-**Untruncated weight;
-%MACRO XXX;
-%let outcome_list=MACE MI Stroke CVdeath HHF Death;
-%do i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&i.);
-%RiskAnalysis (
-in_data_crude=y.fu_itt_all, in_data_adjust=y.fu_itt_all
-, adj_varlist_cate=trial_id, adj_varlist_cont=
-, outcome=out&i., group=exposure, fu_time=t&i., weight=iptw
-, out_data=rst_&i., output_trt0=Continuation, output_trt1=Switching
-, note=Untruncated_&output_outcome.
-, whycensor=N, reason_censor=, out_data_whycensor=
-);
-%end;
-%MEND; %XXX;
-data z.rst_sens1; set rst_1 - rst_6; run;
-
-**Define drug regular users as have two RX within 90 days;
-proc sql;
-create table temp_sod as
-select distinct a.patid, a.eventdate, a.prodcode, b.type_id, b.info, b.ingr
-from a.gd_therapy as a
-inner join y.list_rx as b on a.prodcode=b.code 
-where substr(b.type_id,1,5)="SOD_1" and b.code_sys="gold"
-;quit;
-proc sql;
-create table temp_1 as
-select distinct a.patid, a.yob, a.htn_1st_dt,  b.*
-from y.all_pat_gold as a
-inner join temp_sod as b on a.patid=b.patid 
-		and (a.htn_1st_dt - 90 <= b.eventdate and b.eventdate < a.htn_1st_dt)
-group by b.patid, b.type_id
-having count(distinct b.eventdate)>1
-;quit; *16818(180d) > 7618(90d) obs;
-proc sql;
-create table temp_2 as
-select distinct patid, htn_1st_dt, type_id as index_tp
-from temp_1
-order by patid, index_tp
-;quit; *1253;
-data x.incl_gold_1_90d; set temp_2; run;
-/*proc sql;*/
-/*create table test as*/
-/*select distinct a.*, b.index_tp as index_tp_main*/
-/*from x.incl_gold_1_90d as a*/
-/*left join x.incl_gold_1 as b on a.patid=b.patid*/
-/*where a.patid in (select patid from x.incl_gold_1)*/
-/*group a.patid*/
-/*having count(a.patid)>1*/
-/*order by a.patid, a.index_tp*/
-/*;quit;*/
-proc sql;
-create table temp_0 as
-select distinct *
-from y.seq_pat_gold
-where patid2 not in (select patid2 from x.excl_gold) 
-	and patid in (select patid from x.incl_gold_1_90d)
-order by patid, trial_id
-;quit; *7921(180d)>5924(90d) obs;
-proc sql;
-create table temp_1 as
-select distinct a.* 
-		, max(case when substr(b.type_id,5,1)="1" then 1 else 0 end) as sod_rx
-		, max(case when substr(b.type_id,5,1)="0" then 1 else 0 end) as std_rx
-from temp_0 as a
-left join y.cht_trt_gold as b on a.patid=b.patid 
-		and a.enrol_dt <= b.eventdate < a.enrol_dt + (365.25/12)*3
-		and substr(a.index_tp,7,1)=substr(b.type_id,7,1)
-group by a.patid, a.trial_id, a.index_tp
-;quit; *7871>5924 obs;
-/*proc sql;*/
-/*create table test as*/
-/*select distinct **/
-/*from temp_1*/
-/*group by patid, trial_id*/
-/*having count(distinct index_tp)>1 and (count(distinct sod_rx)>1 or count(distinct std_rx)>1)*/
-/*order by patid, trial_id*/
-/*;quit;*/
-proc sql;
-create table temp_2 as
-select distinct patid, trial_id, enrol_dt, min(sod_rx) as sod_rx, min(std_rx) as std_rx
-from temp_1
-group by patid, trial_id
-;quit;
-data temp_3;
-set temp_2;
-if sod_rx=1 then trt=0; *continue;
-if sod_rx=0 and std_rx=1 then trt=1; *switch to standard form;
-if sod_rx=0 and std_rx=0 then trt=9; *exclude;
-run;
-/*proc sql;*/
-/*create table test as*/
-/*select **/
-/*from temp_3*/
-/*group by patid, trial_id*/
-/*having count(distinct trt)>1*/
-/*;quit;*/
-/*proc freq data=temp_3; table trial_id*trt/nocol nopercent; run;*/
-proc sql;
-create table temp_4 as
-select distinct a.patid, a.enrol_dt, a.trial_id, trt
-	, (
-	case when trt=0 then min(c.eventdate)
-	else case when trt=1 then min(d.eventdate) end end
-	) as rx_1st_dt format yymmdd10.
-	, min(b.eventdate) as outcome_dt format yymmdd10.
-from temp_3 as a
-left join y.cht_out_gold as b on a.patid=b.patid 
-	and a.enrol_dt <= b.eventdate
-left join y.cht_trt_gold as c on a.patid=c.patid 
-	and a.enrol_dt <= c.eventdate and substr(c.type_id,1,5)="SOD_1"
-left join y.cht_trt_gold as d on a.patid=d.patid 
-	and a.enrol_dt <= d.eventdate and substr(d.type_id,1,5)="SOD_0"
-group by a.patid, a.trial_id
-;quit; *7871>5889 obs;
-data x.excl_gold_7_90d x.excl_gold_8_90d;
-set temp_4;
-if trt=9 then output x.excl_gold_7_90d;
-if enrol_dt <= outcome_dt and outcome_dt <=rx_1st_dt then output x.excl_gold_8_90d;
-/*drop outcome_dt rx_1st_dt;*/
-run;
-data temp_5;
-set temp_4;
-if trt=9 then delete;
-if enrol_dt <= outcome_dt and outcome_dt <=rx_1st_dt then delete;
-/*drop outcome_dt rx_1st_dt;*/
-run; *7304>5552 obs;
-data temp_6;
-set temp_5;
-by patid trial_id;
-pre_trial=lag(trial_id);
-if first.patid then do; pre_trial=.; flag_1st=1; end;
-else if trial_id=pre_trial+1 then flag_1st=0;
-else flag_1st=1;
-retain incl 0;
-incl=incl+flag_1st;
-run;
-/*proc sql;*/
-/*create table test as*/
-/*select **/
-/*from temp_5*/
-/*group by patid*/
-/*having count(distinct incl)>1*/
-/*order by patid, trial_id*/
-/*;quit;*/
-proc sql;
-create table temp_7 as
-select distinct patid, enrol_dt, trial_id, trt
-from temp_6
-group by patid
-having min(trial_id)=1 and incl=min(incl)
-;quit; *6797>5147 obs;
-data y.seq_asgmt_gold_90d; set temp_7; run;
-proc freq data=y.seq_asgmt_gold_90d; table trial_id*trt/norow nocol nopercent; run;
-/*proc sql;*/
-/*create table test as*/
-/*select distinct a.*, b.trt as trt_main*/
-/*from y.seq_asgmt_gold_90d as a*/
-/*inner join y.seq_asgmt_gold as b on a.patid=b.patid and a.trial_id=b.trial_id and a.trt^=b.trt*/
-/*;quit;*/
-
-proc sql;
-create table temp_0 as
-select distinct a.*
-from y.fin_wide_gold(drop=cens5_dt1 cens5_dt2 cens5_dt) as a
-inner join y.seq_asgmt_gold_90d as b on a.patid=b.patid and a.trial_id and b.trial_id
-;quit;*5140 (7: enrol_dt < min(of cens1_dt - cens4_dt));
-
-%MACRO XXX;
-%let count_i=1;
-%IPTW (in_data=temp_0, group_var=trt
-, varlist_cont=cov_base_demo_1 cov_base_demo_8 
-, varlist_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_22 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
-, truncate_min=0, truncate_max=99.5, weight_var=iptw
-, out_data_all=_90d_wt_all, out_data_trunc=_90d_wt_trunc); *Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _23 (Parkinson);
-%fu_data (in_data=_90d_wt_all, out_data=fu_90d_all);
-%fu_data (in_data=_90d_wt_trunc, out_data=fu_90d_trunc);
-
-%let outcome_list=MACE MI Stroke CVdeath HHF Death;
-%do i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&i.);
-%RiskAnalysis (
-in_data_crude=fu_90d_all, in_data_adjust=fu_90d_trunc
-, adj_varlist_cate=trial_id, adj_varlist_cont=
-, outcome=out&i., group=exposure, fu_time=t&i., weight=iptw
-, out_data=rst_&count_i., output_trt0=Continuation, output_trt1=Switching
-, note=_90d_2RX_&output_outcome.
-, whycensor=N, reason_censor=, out_data_whycensor=
-);
-%let count_i=%eval(&count_i.+1);
-%end; 
-proc delete data=_90d_wt_all _90d_wt_trunc fu_90d_all fu_90d_trunc; run;
-%MEND; %XXX;
-data z.rst_sens2; set rst_1 - rst_6; run;
-%MACRO XXX; %do i=1 %to 6; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
-
-**Restrict patients who receive same class of sodium-continuation drug before discontinuation??;
-
-
-
-**Per-protocol analysis;
-/**IPCW for per protocol analysis;*/
-/*data temp;*/
-/*set y.fin_long_gold; */
-/*format censor_dt yymmdd10.;*/
-/*if index_dt < cens5_dt and cens5_dt <= index_dt + (365.25/12)*3 then crossover=1;*/
-/*else crossover=0;*/
-/*run;*/
-/*proc logistic descending data=temp;*/
-/*class crossover cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 - cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;*/
-/*model crossover(event='0')=cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 cov_tv_demo_4 - cov_tv_demo_8 cov_tv_bp cov_tv_dx_1 - cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;*/
-/*output out=ipcw_1 prob=prob_uc;*/
-/*run;*/
-/*proc sort data=temp; by descending crossover; run;*/
-/*proc freq data=temp;*/
-/*table crossover cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;*/
-/*run;*/
-
-
+ff
