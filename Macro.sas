@@ -395,23 +395,28 @@ proc datasets lib=work nolist;
 quit;
 run;
 %MEND;
-%MACRO IPTW (in_data=, out_data=, group_var=, var_cate=, var_cont=);
+%MACRO IPTW(in_data=, out_data=, group_var=, var_cate=, var_cont=);
 proc logistic data=&in_data. descending;
 class &group_var. &var_cate.;
 model &group_var.(event='1')=&var_cate. &var_cont.;
 output out=model_1 prob=prob_1;
 run; 
+proc sql;
+select sum(case when &group_var.=1 then 1 else 0 end)
+	, sum(case when &group_var.=0 then 1 else 0 end)
+	into: n_trt1, :n_trt0
+from model_1
+;quit;
 data temp_1 (drop=_level_ prob_1); 
 set model_1; 
-if  &group_var.=1 then iptw=1/prob_1;
-else if  &group_var.=0 then iptw=1/(1-prob_1);
+p=&n_trt1./(&n_trt1.+&n_trt0.);
+if  &group_var.=1 then do; iptw=1/prob_1; stabiptw=p/prob_1; end;
+else if  &group_var.=0 then do; iptw=1/(1-prob_1); stabiptw=(1-p)/(1-prob_1); end;
 run;
 data &out_data.; set temp_1; run;
-proc delete data=model_1; run;
+proc delete data=model_1 temp_1; run;
 %MEND;
-%MACRO IPCW (in_data=, out_data=, group_var=
-, censor_dt= , futv_stt_dt=, futv_dur=
-, var_cate=, var_cont=);
+%MACRO IPCW (in_data=, out_data=, group_var=, censor_dt= , futv_stt_dt=, futv_dur=, var_cate=, var_cont=, stab_var_cate=, stab_var_cont=);
 data temp_1;
 set &in_data.;
 if &futv_stt_dt. < &censor_dt. and &censor_dt. <= &futv_stt_dt. + &futv_dur. then crossover=1;
@@ -422,18 +427,30 @@ proc logistic data=temp_1 descending;
 class crossover &group_var. &var_cate.;
 model crossover(event='0')= &group_var. time_id time_id*time_id &var_cate. &var_cont.;
 output out=model_2 prob=prob_2;
-run; 
-proc sort data=model_2 out=temp_2; by patid trial_id time_id; run;
-data temp_3 (drop=_level_ prob_2 prob_2_cp); 
-set temp_2; 
-by patid trial_id time_id;
-if first.trial_id then do; prob_2_cp=1; end;
-retain prob_2_cp;
-prob_2_cp=prob_2_cp*prob_2;
-ipcw=1/prob_2_cp;
+proc logistic data=temp_1 descending;
+class crossover &group_var. &stab_var_cate.;
+model crossover(event='0')= &group_var. time_id time_id*time_id &stab_var_cate. &stab_var_cont.;
+output out=model_3 prob=prob_3;
 run;
-data &out_data.; set temp_3; run;
-proc delete data=model_2 temp_1 - temp_3; run;
+proc sql;
+create table temp_2 as
+select distinct a.*, b.prob_3
+from model_2 as a
+left join model_3 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.time_id=b.time_id
+;quit;
+proc sort data=temp_2 out=temp_3; by patid trial_id time_id; run;
+data temp_4 (drop=_level_ prob_2 prob_2cp prob_3 prob_3cp); 
+set temp_3; 
+by patid trial_id time_id;
+if first.trial_id then do; prob_2cp=1; prob_3cp=1; end;
+retain prob_2cp prob_3cp;
+prob_2cp=prob_2cp*prob_2;
+prob_3cp=prob_3cp*prob_3;
+ipcw=1/prob_2cp;
+stabipcw=prob_3cp/prob_2cp;
+run;
+data &out_data.; set temp_4; run;
+proc delete data=model_2 model_3 temp_1 - temp_4; run;
 %MEND;
 %MACRO TRUNCATION (in_data=, out_data=, weight=, min=, max=);
 proc rank data=&in_data. out=temp_tr_1 groups=1000;
@@ -478,7 +495,7 @@ else if &futv_stt_dt. < &outcome._dt and &outcome._dt <= &futv_stt_dt. + &futv_d
 else outcome=0;
 run;
 %MEND;
-%MACRO RiskEstimate(in_data_wide=, in_data_long=, out_data=, group_var=, fu_var=, weight_var=, stab_var_cate=, stab_var_cont=, output_trt1=, output_trt0=, note=);
+%MACRO RiskEstimate(in_data_wide=, in_data_long=, out_data=, group_var=, fu_var=, weight_var=, adj_var_cate=, adj_var_cont=, output_trt1=, output_trt0=, note=);
 proc freq data=&in_data_wide.;
 tables outcome * &group_var. / norow nocol nopercent;
 ods output CrossTabFreqs=freq;
@@ -496,8 +513,8 @@ repeated subject=patid/ type=ind;
 ods output Diffs=risk;
 run;
 proc genmod data=&in_data_long. descending;
-class patid &group_var. &stab_var_cate. (ref='0');
-model outcome=&group_var. trial_id time_id time_id*time_id &stab_var_cate. &stab_var_cont. /link=logit dist=bin;
+class patid &group_var. (ref='0') &adj_var_cate. ;
+model outcome=&group_var. trial_id time_id time_id*time_id &adj_var_cate. &adj_var_cont. /link=logit dist=bin;
 lsmeans &group_var./ ilink exp oddsratio diff cl;
 repeated subject=patid/ type=ind;
 weight &weight_var.;
