@@ -1922,11 +1922,11 @@ data long_0; set y.fin_long_gold; run;
 , var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
 , var_cont=cov_base_demo_1 cov_base_demo_8
 ); *Removed due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _22 (Schizophrenia), _23 (Parkinson);
-%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=iptw, min=0, max=99.5);
+%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=stabiptw, min=0, max=99.5);
 
 proc sql;
 create table long_1 as
-select a.*, b.iptw as weight
+select a.*, b.stabiptw as weight
 from long_0 as a
 left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
 ;quit;
@@ -1945,7 +1945,8 @@ left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
 );
 %RiskEstimate(
   in_data_wide=wide_3, in_data_long=long_2, out_data=rst_&count.
-, group_var=trt, fu_var=fu_day, weight_var=weight, stab_var_cate=, stab_var_cont=
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=, adj_var_cont=
 , output_trt1=Discontinuation, output_trt0=Continuation, note=&output_outcome._ITT
 );
 proc delete data=wide_3 long_2; run; 
@@ -1965,7 +1966,6 @@ data long_0; set y.fin_long_gold; run;
 , var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
 , var_cont=cov_base_demo_1 cov_base_demo_8
 );
-
 %MACRO XXX;
 %let count=1;
 %let outcome_list=MACE MI Stroke CVdeath HHF Death;
@@ -1983,10 +1983,13 @@ data long_0; set y.fin_long_gold; run;
 , censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
 , var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
 		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22
-, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8);
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8
+, stab_var_cate=cov_base_demo_2 cov_base_demo_7
+, stab_var_cont=cov_base_demo_1 cov_base_demo_8
+);
 proc sql;
 create table long_3 as
-select a.*, b.iptw, (a.ipcw*b.iptw) as weight
+select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
 from long_2 as a
 left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
 order by a.patid, a.trial_id, a.time_id
@@ -1994,7 +1997,9 @@ order by a.patid, a.trial_id, a.time_id
 %TRUNCATION (in_data=long_3, out_data=long_4, weight=weight, min=0, max=99.5);
 %RiskEstimate(
   in_data_wide=wide_2, in_data_long=long_4, out_data=rst_&count.
-, group_var=trt, fu_var=fu_day, weight_var=weight, stab_var_cate=, stab_var_cont=
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=cov_base_demo_2 cov_base_demo_7
+, adj_var_cont=cov_base_demo_1 cov_base_demo_8
 , output_trt1=Discontinuation, output_trt0=Continuation, note=&output_outcome._PP
 );
 proc delete data=wide_2 long_2 long_3 long_4; run; 
@@ -2004,11 +2009,106 @@ proc delete data=wide_2 long_2 long_3 long_4; run;
 data z.rst_pp; set rst_1 - rst_6; run;
 proc delete data=rst_1 - rst_6; run;
 
-*Plot;
+*Subgroup analysis: T2DM, dyslipidaemia, history of CVD;
+data wide_0;
+set y.fin_wide_gold;
+subgrp_1=cov_base_dx_9;
+subgrp_2=cov_base_dx_7;
+subgrp_3=max(of cov_base_dx_1 - cov_base_dx_6);
+run;
+data long_0;
+set y.fin_long_gold;
+subgrp_1=cov_base_dx_9;
+subgrp_2=cov_base_dx_7;
+subgrp_3=max(of cov_base_dx_1 - cov_base_dx_6);
+run;
 
+%MACRO XXX;
+%let count=1;
+%let subgroup_list=T2DM Dyslipidaemia HistoryCVD;
+%do subgrp_i=1 %to 3;
+%let subgroup_name=%scan(&subgroup_list.,&subgrp_i.);
+%do subgrp_value=0 %to 1;
 
-*Subgroup analysis;
+data wide_1;
+set wide_0;
+if subgrp_&subgrp_i.=&subgrp_value.;
+run;
+data long_1;
+set long_0;
+if subgrp_&subgrp_i.=&subgrp_value.;
+run;
 
+%IPTW (
+  in_data=wide_1
+, out_data=wide_2
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+);
+%TRUNCATION (in_data=wide_2, out_data=wide_3, weight=stabiptw, min=0, max=99.5);
+
+proc sql;
+create table long_2 as
+select a.*, b.stabiptw as weight
+from long_1 as a
+left join wide_3 as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let output_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_3, out_data_wide=wide_4
+, in_data_long=long_2, out_data_long=long_3
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%RiskEstimate(
+  in_data_wide=wide_4, in_data_long=long_3, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=, adj_var_cont=
+, output_trt1=Discontinuation, output_trt0=Continuation
+, note=&subgroup_name._&subgrp_value._&output_outcome._ITT
+); 
+%let count=%eval(&count.+1);
+
+%IPCW (
+  in_data=long_3, out_data=long_4, group_var=trt
+, censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8
+, stab_var_cate=cov_base_demo_2 cov_base_demo_7
+, stab_var_cont=cov_base_demo_1 cov_base_demo_8
+);
+proc sql;
+create table long_5 as
+select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
+from long_4 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by a.patid, a.trial_id, a.time_id
+;quit;
+%TRUNCATION (in_data=long_5, out_data=long_6, weight=weight, min=0, max=99.5);
+%RiskEstimate(
+  in_data_wide=wide_4, in_data_long=long_6, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=cov_base_demo_2 cov_base_demo_7
+, adj_var_cont=cov_base_demo_1 cov_base_demo_8
+, output_trt1=Discontinuation, output_trt0=Continuation
+, note=&subgroup_name._&subgrp_value._&output_outcome._PP
+);
+proc delete data=wide_4 long_3 long_4 long_5 long_6; run;
+%let count=%eval(&count.+1);
+%end; 
+
+proc delete data=wide_1 wide_2 wide_3 long_1 long_2; run;
+%end; %end;
+%MEND; %XXX;
+
+data z.rst_subgroup; set rst_1 - rst_72; run;
+%MACRO XXX; %do i=1 %to 72; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
 
 
 
