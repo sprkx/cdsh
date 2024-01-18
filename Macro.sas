@@ -391,7 +391,141 @@ run;
 ods exclude none; 
 
 proc datasets lib=work nolist;
- delete tabs: means:;
+ delete tabs: means: trt_: total_: t1: c1 s1 cat_freqs cont: for: vars: temp temp1;
 quit;
 run;
+%MEND;
+%MACRO IPTW (in_data=, out_data=, group_var=, var_cate=, var_cont=);
+proc logistic data=&in_data. descending;
+class &group_var. &var_cate.;
+model &group_var.(event='1')=&var_cate. &var_cont.;
+output out=model_1 prob=prob_1;
+run; 
+data temp_1 (drop=_level_ prob_1); 
+set model_1; 
+if  &group_var.=1 then iptw=1/prob_1;
+else if  &group_var.=0 then iptw=1/(1-prob_1);
+run;
+data &out_data.; set temp_1; run;
+proc delete data=model_1; run;
+%MEND;
+%MACRO IPCW (in_data=, out_data=, group_var=
+, censor_dt= , futv_stt_dt=, futv_dur=
+, var_cate=, var_cont=);
+data temp_1;
+set &in_data.;
+if &futv_stt_dt. < &censor_dt. and &censor_dt. <= &futv_stt_dt. + &futv_dur. then crossover=1;
+else if &censor_dt.^=. and &censor_dt. <= &futv_stt_dt. then delete;
+else crossover=0;
+run;
+proc logistic data=temp_1 descending;
+class crossover &group_var. &var_cate.;
+model crossover(event='0')= &group_var. time_id time_id*time_id &var_cate. &var_cont.;
+output out=model_2 prob=prob_2;
+run; 
+proc sort data=model_2 out=temp_2; by patid trial_id time_id; run;
+data temp_3 (drop=_level_ prob_2 prob_2_cp); 
+set temp_2; 
+by patid trial_id time_id;
+if first.trial_id then do; prob_2_cp=1; end;
+retain prob_2_cp;
+prob_2_cp=prob_2_cp*prob_2;
+ipcw=1/prob_2_cp;
+run;
+data &out_data.; set temp_3; run;
+proc delete data=model_2 temp_1 - temp_3; run;
+%MEND;
+%MACRO TRUNCATION (in_data=, out_data=, weight=, min=, max=);
+proc rank data=&in_data. out=temp_tr_1 groups=1000;
+var &weight.;
+ranks rank;
+run;
+proc sql noprint;
+select max(case when rank+1=&max.*10 then &weight. end) 
+	, min(case when rank+1=&min.*10 then &weight. end) 
+into: w_max, :w_min
+from temp_tr_1
+;quit;
+data temp_tr_2;
+set temp_tr_1;
+if &max.*10 < rank+1 then w_new=&w_max.;
+else if rank+1 < &min.*10 then w_new=&w_min.;
+else w_new=&weight.;
+run;
+data temp_tr_3;
+set temp_tr_2;
+drop &weight.;
+rename w_new=&weight.;
+run;
+data &out_data.; set temp_tr_3; run;
+proc delete data=temp_tr_1 - temp_tr_3; run;
+%MEND;
+%MACRO OutcomeDataset (in_data_wide=, out_data_wide=, in_data_long=, out_data_long=, fu_stt_dt=, fu_end_dt=, outcome=, output_fu_var=, futv_stt_dt=, futv_dur=);
+data &out_data_wide.;
+set &in_data_wide.;
+format fu_end_dt yymmdd10.;
+fu_end_dt=&fu_end_dt.;
+&output_fu_var.= min(&outcome._dt, fu_end_dt)-&fu_stt_dt.;
+if &outcome._dt^="." and &outcome._dt= min(&outcome._dt, fu_end_dt) then outcome=1; 
+else outcome=0;
+run;
+data &out_data_long.;
+set &in_data_long.;
+format fu_end_dt yymmdd10.;
+fu_end_dt=&fu_end_dt.;
+if min(&outcome._dt, fu_end_dt)^=. and min(&outcome._dt, fu_end_dt) <= &futv_stt_dt. then delete;
+else if &futv_stt_dt. < &outcome._dt and &outcome._dt <= &futv_stt_dt. + &futv_dur. then outcome=1;
+else outcome=0;
+run;
+%MEND;
+%MACRO RiskEstimate(in_data_wide=, in_data_long=, out_data=, group_var=, fu_var=, weight_var=, stab_var_cate=, stab_var_cont=, output_trt1=, output_trt0=, note=);
+proc freq data=&in_data_wide.;
+tables outcome * &group_var. / norow nocol nopercent;
+ods output CrossTabFreqs=freq;
+run;
+proc tabulate data=&in_data_wide. out=fu;
+var &fu_var.;
+class &group_var.;
+tables (&fu_var.)*(sum mean std median q1 q3 min max), (&group_var.);
+run;
+proc genmod data=&in_data_long. descending;
+class patid &group_var. (ref='0');
+model outcome=&group_var. trial_id time_id time_id*time_id/link=logit dist=bin;
+lsmeans &group_var./ ilink exp oddsratio diff cl;
+repeated subject=patid/ type=ind;
+ods output Diffs=risk;
+run;
+proc genmod data=&in_data_long. descending;
+class patid &group_var. &stab_var_cate. (ref='0');
+model outcome=&group_var. trial_id time_id time_id*time_id &stab_var_cate. &stab_var_cont. /link=logit dist=bin;
+lsmeans &group_var./ ilink exp oddsratio diff cl;
+repeated subject=patid/ type=ind;
+weight &weight_var.;
+ods output Diffs=risk_wt;
+run;
+proc sql;
+create table temp_rst as
+select distinct 
+	a.trt as trt format 1.
+	, (case when a.&group_var.=0 then "&output_trt0." else "&output_trt1." end) as Treatment
+	, b.frequency as Patients label=""
+	, c.frequency as Events label=""
+	, d.fu_day_mean as MeanFU label="" format 8.1
+	, e.OddsRatio as cOR label=""
+	, e.LowerOR as cOR_Lower label=""
+	, e.UpperOR as cOR_Upper label=""
+	, f.OddsRatio as wOR label=""
+	, f.LowerOR as wOR_Lower label=""
+	, f.UpperOR as wOR_Upper label=""
+	, "&note." as Note length=30
+from fu as a
+left join freq as b on a.&group_var.=b.&group_var. and b.outcome not in (0,1)
+left join freq as c on a.&group_var.=c.&group_var. and c.outcome=1
+left join fu as d on a.&group_var.=d.&group_var.
+left join risk as e on a.&group_var.=1
+left join risk_wt as f on a.&group_var.=1
+;quit;
+proc sort data=temp_rst; by descending &group_var.; run;
+data &out_data.; set temp_rst; run;
+proc delete data=temp_rst fu freq risk risk_wt; run;
 %MEND;
