@@ -1350,15 +1350,16 @@ group by patid, trial_id
 ;quit; 
 data x.seq_fu4_gold; set cont_8; run; *discontinue at least one sodium-containing drug;
 
+data seq_fu_temp; set x.seq_fu3_gold x.seq_fu4_gold; run;
+
 proc sql;
 create table temp as
-select distinct a.*, b.*, c.*, d.*, e.*, f.*
+select distinct a.*, b.*, c.*, d.*, e.*
 from y.seq_asgmt_gold as a
 left join x.seq_fu0_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
 left join x.seq_fu1_gold as c on a.patid=c.patid and a.trial_id=c.trial_id
 left join x.seq_fu2_gold as d on a.patid=d.patid and a.trial_id=d.trial_id
-left join x.seq_fu3_gold as e on a.patid=e.patid and a.trial_id=e.trial_id
-left join x.seq_fu4_gold as f on a.patid=f.patid and a.trial_id=f.trial_id
+left join seq_fu_temp as e on a.patid=e.patid and a.trial_id=e.trial_id
 ;quit;
 data temp2;
 set temp;
@@ -1802,6 +1803,7 @@ left join y.seq_cov_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
 %MEND; %XXX; *75424>68220 (calcium and lcd);
 data y.fin_long_gold; set temp_1; run;
 
+
 /**********************/
 /* Merge GOLD & Aurum */
 /**********************/
@@ -1885,72 +1887,129 @@ proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 ex
 
 data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
 
-*Weights: IPTW, IPCW;
-**probability of discontinuation;
-proc logistic data=y.fin_wide_gold descending;
-class trt cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
-model trt(event='1')=cov_base_demo_1 cov_base_demo_8 cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
-output out=model_1 prob=prob_1;
-run; *Remove due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _22 (Schizophrenia), _23 (Parkinson);
-data temp_1 (drop=_level_ prob_1); 
-set model_1; 
-if trt=1 then iptw=1/prob_1;
-else if trt=0 then iptw=1/(1-prob_1);
-run;
-data y.fin_wide_wt; set temp_1; run;
-
-**probabaility of uncensoring;
-data temp;
-set y.fin_long_gold;
-format censor_dt yymmdd10.;
-censor_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt);
-if index_dt < censor_dt and censor_dt <= index_dt + (365.25/12)*3 then censor=1;
-else if censor_dt <= index_dt then delete;
-else censor=0;
-run;
-proc logistic data=temp;
-class censor cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 
-	  cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;
-model censor(event='0')=trt time_id time_id*time_id cov_base_demo_1 - cov_base_demo_8 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22 
-cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22;
-output out=model_2 prob=prob_2;
-run;
-proc sql;
-create table temp_2 as
-select distinct a.*, b.prob_1
-from model_2 as a
-left join model_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
-order by patid, trial_id, time_id
-;quit;
-data temp_3 (drop=_level_);
-set temp_2;
-by patid trial_id time_id;
-if first.trial_id then do; prob_2_cp=1; end;
-retain prob_2_cp;
-prob_2_cp=prob_2_cp*prob_2;
-ipcw=1/prob_2_cp;
-if trt=1 then iptw=1/prob_1;
-else if trt=0 then iptw=1/(1-prob_1);
-run;
-data temp_4 (drop=prob_1 prob_2 prob_2_cp);
-set temp_3;
-w1=iptw;
-w2=iptw*ipcw;
-run;
-data y.fin_long_wt; set temp_4; run;
-
 *Baseline characteristics;
-%Table1 (in_for_table1=y.fin_wide_wt
+%Table1 (in_for_table1=y.fin_wide_gold
 , treatment_var=trt
 , categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
 , continuous_var_list=cov_base_demo_1 cov_base_demo_8
 , weight=dummy_weight
 , out_table1=z.char_crude);
 
-*Risk analysis;
+%IPTW (in_data=y.fin_wide_gold
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+); *X due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _22 (Schizophrenia), _23 (Parkinson);
+%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=iptw, min=0, max=99.5);
+/*proc freq data=temp; table iptw; run;*/
+%Table1 (in_for_table1=wide_2
+, treatment_var=trt
+, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_1 cov_base_dx_2 cov_base_dx_3 cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_8 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_15 cov_base_dx_16 cov_base_dx_17 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_22 cov_base_dx_23 cov_base_dx_24 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, continuous_var_list=cov_base_demo_1 cov_base_demo_8
+, weight=iptw
+, out_table1=z.char_weight);
 
-data temp_crude;
-set y.fin_long_wt;
-rename &outcome.=outcome &group.=exposure;
-run;
-ff
+*Risk Analysis;
+**Intention-to-treat;
+data wide_0; set y.fin_wide_gold; run;
+data long_0; set y.fin_long_gold; run;
+
+%IPTW (
+  in_data=wide_0
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+); *Removed due to small size: cov_dx_8 (type 1 diabetes), _15 (liver disease), _17 (gout), _22 (Schizophrenia), _23 (Parkinson);
+%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=iptw, min=0, max=99.5);
+
+proc sql;
+create table long_1 as
+select a.*, b.iptw as weight
+from long_0 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+
+%MACRO XXX;
+%let count=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let output_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_2, out_data_wide=wide_3
+, in_data_long=long_1, out_data_long=long_2
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%RiskEstimate(
+  in_data_wide=wide_3, in_data_long=long_2, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight, stab_var_cate=, stab_var_cont=
+, output_trt1=Discontinuation, output_trt0=Continuation, note=&output_outcome._ITT
+);
+proc delete data=wide_3 long_2; run; 
+%let count=%eval(&count.+1);
+%end;
+%MEND; %XXX;
+data z.rst_itt; set rst_1 - rst_6; run;
+proc delete data=rst_1 - rst_6; run;
+
+**Per-protocol analysis;
+data wide_0; set y.fin_wide_gold; run;
+data long_0; set y.fin_long_gold; run;
+
+%IPTW (
+  in_data=wide_0, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+);
+
+%MACRO XXX;
+%let count=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let output_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_1, out_data_wide=wide_2
+, in_data_long=long_0, out_data_long=long_1
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%IPCW (
+  in_data=long_1, out_data=long_2, group_var=trt
+, censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8);
+proc sql;
+create table long_3 as
+select a.*, b.iptw, (a.ipcw*b.iptw) as weight
+from long_2 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by a.patid, a.trial_id, a.time_id
+;quit;
+%TRUNCATION (in_data=long_3, out_data=long_4, weight=weight, min=0, max=99.5);
+%RiskEstimate(
+  in_data_wide=wide_2, in_data_long=long_4, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight, stab_var_cate=, stab_var_cont=
+, output_trt1=Discontinuation, output_trt0=Continuation, note=&output_outcome._PP
+);
+proc delete data=wide_2 long_2 long_3 long_4; run; 
+%let count=%eval(&count.+1);
+%end;
+%MEND; %XXX;
+data z.rst_pp; set rst_1 - rst_6; run;
+proc delete data=rst_1 - rst_6; run;
+
+*Plot;
+
+
+*Subgroup analysis;
+
+
+
+
+*);*/;/*'*/ /*"*/; %MEND;run;quit;;;;;
