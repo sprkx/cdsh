@@ -1935,7 +1935,7 @@ left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
 %let count=1;
 %let outcome_list=MACE MI Stroke CVdeath HHF Death;
 %do out_i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&out_i.);
+%let label_outcome=%scan(&outcome_list.,&out_i.);
 %OutcomeDataset (
   in_data_wide=wide_2, out_data_wide=wide_3
 , in_data_long=long_1, out_data_long=long_2
@@ -1947,7 +1947,7 @@ left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
   in_data_wide=wide_3, in_data_long=long_2, out_data=rst_&count.
 , group_var=trt, fu_var=fu_day, weight_var=weight
 , adj_var_cate=, adj_var_cont=
-, output_trt1=Discontinuation, output_trt0=Continuation, note=&output_outcome._ITT
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._ITT
 );
 proc delete data=wide_3 long_2; run; 
 %let count=%eval(&count.+1);
@@ -1970,7 +1970,7 @@ data long_0; set y.fin_long_gold; run;
 %let count=1;
 %let outcome_list=MACE MI Stroke CVdeath HHF Death;
 %do out_i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&out_i.);
+%let label_outcome=%scan(&outcome_list.,&out_i.);
 %OutcomeDataset (
   in_data_wide=wide_1, out_data_wide=wide_2
 , in_data_long=long_0, out_data_long=long_1
@@ -1991,7 +1991,7 @@ proc sql;
 create table long_3 as
 select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
 from long_2 as a
-left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+left join wide_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
 order by a.patid, a.trial_id, a.time_id
 ;quit;
 %TRUNCATION (in_data=long_3, out_data=long_4, weight=weight, min=0, max=99.5);
@@ -2000,7 +2000,7 @@ order by a.patid, a.trial_id, a.time_id
 , group_var=trt, fu_var=fu_day, weight_var=weight
 , adj_var_cate=cov_base_demo_2 cov_base_demo_7
 , adj_var_cont=cov_base_demo_1 cov_base_demo_8
-, output_trt1=Discontinuation, output_trt0=Continuation, note=&output_outcome._PP
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._PP
 );
 proc delete data=wide_2 long_2 long_3 long_4; run; 
 %let count=%eval(&count.+1);
@@ -2008,6 +2008,83 @@ proc delete data=wide_2 long_2 long_3 long_4; run;
 %MEND; %XXX;
 data z.rst_pp; set rst_1 - rst_6; run;
 proc delete data=rst_1 - rst_6; run;
+
+*Plot;
+ods listing gpath='E:\DataAnalysis\DiscSod\Output';
+data wide_0; set y.fin_wide_gold; run;
+data long_0; set y.fin_long_gold; run;
+
+%IPTW (
+  in_data=wide_0
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+);
+%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=stabiptw, min=0, max=99.5);
+proc sql;
+create table long_1 as
+select a.*, b.stabiptw as weight
+from long_0 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+
+%MACRO XXX;
+%let count_i=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let label_outcome=%scan(&outcome_list.,&out_i.);
+
+%OutcomeDataset (
+  in_data_wide=wide_2, out_data_wide=wide_3
+, in_data_long=long_1, out_data_long=long_2
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%PLOT_LONG (
+  type=ci, in_data=long_2, out_data=diff_&count_i., note=&label_outcome._ITT
+, line_thick=1, label_trt0=Continuation, label_trt1=Discontinuation
+, file_name=out&out_i._&label_outcome._ITT, format=png
+);
+%let count_i=%eval(&count_i.+1);
+
+%OutcomeDataset (
+  in_data_wide=wide_1, out_data_wide=wide_4
+, in_data_long=long_0, out_data_long=long_3
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%IPCW (
+  in_data=long_3, out_data=long_4, group_var=trt
+, censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8
+, stab_var_cate=cov_base_demo_2 cov_base_demo_7
+, stab_var_cont=cov_base_demo_1 cov_base_demo_8
+);
+proc sql;
+create table long_5 as
+select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
+from long_4 as a
+left join wide_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by a.patid, a.trial_id, a.time_id
+;quit;
+%TRUNCATION (in_data=long_5, out_data=long_6, weight=weight, min=0, max=99.5);
+%PLOT_LONG (
+  type=ci, in_data=long_6, out_data=diff_&count_i., note=&label_outcome._PP
+, line_thick=1, label_trt0=Continuation, label_trt1=Discontinuation
+, file_name=out&out_i._&label_outcome._PP, format=png
+);
+%let count_i=%eval(&count_i.+1);
+proc delete data=wide_3 wide_4 long_2 - long_6; run;
+%end;
+%MEND; %XXX;
+data z.rst_diff; set diff_1 - diff_12; run;
+%MACRO XXX; %do i=1 %to 12; proc delete data=diff_&i.; run; %end; %MEND; %XXX;
+ods _all_ close;
 
 *Subgroup analysis: T2DM, dyslipidaemia, history of CVD;
 data wide_0;
@@ -2057,7 +2134,7 @@ left join wide_3 as b on a.patid=b.patid and a.trial_id=b.trial_id
 
 %let outcome_list=MACE MI Stroke CVdeath HHF Death;
 %do out_i=1 %to 6;
-%let output_outcome=%scan(&outcome_list.,&out_i.);
+%let label_outcome=%scan(&outcome_list.,&out_i.);
 %OutcomeDataset (
   in_data_wide=wide_3, out_data_wide=wide_4
 , in_data_long=long_2, out_data_long=long_3
@@ -2069,11 +2146,101 @@ left join wide_3 as b on a.patid=b.patid and a.trial_id=b.trial_id
   in_data_wide=wide_4, in_data_long=long_3, out_data=rst_&count.
 , group_var=trt, fu_var=fu_day, weight_var=weight
 , adj_var_cate=, adj_var_cont=
-, output_trt1=Discontinuation, output_trt0=Continuation
-, note=&subgroup_name._&subgrp_value._&output_outcome._ITT
+, label_trt1=Discontinuation, label_trt0=Continuation
+, note=&subgroup_name._&subgrp_value._&label_outcome._ITT
 ); 
 %let count=%eval(&count.+1);
 
+%OutcomeDataset (
+  in_data_wide=wide_2, out_data_wide=wide_5
+, in_data_long=long_1, out_data_long=long_4
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%IPCW (
+  in_data=long_4, out_data=long_5, group_var=trt
+, censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8
+, stab_var_cate=cov_base_demo_2 cov_base_demo_7
+, stab_var_cont=cov_base_demo_1 cov_base_demo_8
+);
+proc sql;
+create table long_6 as
+select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
+from long_5 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by a.patid, a.trial_id, a.time_id
+;quit;
+%TRUNCATION (in_data=long_6, out_data=long_7, weight=weight, min=0, max=99.5);
+%RiskEstimate(
+  in_data_wide=wide_5, in_data_long=long_7, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=cov_base_demo_2 cov_base_demo_7
+, adj_var_cont=cov_base_demo_1 cov_base_demo_8
+, label_trt1=Discontinuation, label_trt0=Continuation
+, note=&subgroup_name._&subgrp_value._&label_outcome._PP
+);
+proc delete data=wide_4 wide_5 long_3 long_4 long_5 long_6 long_7; run;
+%let count=%eval(&count.+1);
+%end; 
+
+proc delete data=wide_1 wide_2 wide_3 long_1 long_2; run;
+%end; %end;
+%MEND; %XXX;
+data z.rst_subgroup; set rst_1 - rst_72; run;
+%MACRO XXX; %do i=1 %to 72; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
+
+
+*Sensitivity analysis;
+**Untruncated weight;
+data wide_0; set y.fin_wide_gold; run;
+data long_0; set y.fin_long_gold; run;
+
+%IPTW (
+  in_data=wide_0
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+);
+data wide_2; set wide_1; weight=stabiptw; run;
+proc sql;
+create table long_1 as
+select a.*, b.stabiptw as weight
+from long_0 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+
+%MACRO XXX;
+%let count=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let label_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_2, out_data_wide=wide_3
+, in_data_long=long_1, out_data_long=long_2
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%RiskEstimate(
+  in_data_wide=wide_3, in_data_long=long_2, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=, adj_var_cont=
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._ITT_Untrunc
+);
+%let count=%eval(&count.+1);
+
+%OutcomeDataset (
+  in_data_wide=wide_1, out_data_wide=wide_4
+, in_data_long=long_0, out_data_long=long_3
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
 %IPCW (
   in_data=long_3, out_data=long_4, group_var=trt
 , censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
@@ -2087,28 +2254,218 @@ proc sql;
 create table long_5 as
 select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
 from long_4 as a
-left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+left join wide_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
 order by a.patid, a.trial_id, a.time_id
 ;quit;
-%TRUNCATION (in_data=long_5, out_data=long_6, weight=weight, min=0, max=99.5);
 %RiskEstimate(
-  in_data_wide=wide_4, in_data_long=long_6, out_data=rst_&count.
+  in_data_wide=wide_4, in_data_long=long_5, out_data=rst_&count.
 , group_var=trt, fu_var=fu_day, weight_var=weight
 , adj_var_cate=cov_base_demo_2 cov_base_demo_7
 , adj_var_cont=cov_base_demo_1 cov_base_demo_8
-, output_trt1=Discontinuation, output_trt0=Continuation
-, note=&subgroup_name._&subgrp_value._&output_outcome._PP
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._PP_Untrunc
 );
-proc delete data=wide_4 long_3 long_4 long_5 long_6; run;
+proc delete data=wide_3 - wide_4 long_2 - long_5; run; 
 %let count=%eval(&count.+1);
-%end; 
-
-proc delete data=wide_1 wide_2 wide_3 long_1 long_2; run;
-%end; %end;
+%end;
 %MEND; %XXX;
+data z.rst_sens1; set rst_1 - rst_12; run;
+%MACRO XXX; %do i=1 %to 12; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
 
-data z.rst_subgroup; set rst_1 - rst_72; run;
-%MACRO XXX; %do i=1 %to 72; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
+**Define drug regular users as have two RX within 90 days;
+proc sql;
+create table temp_sod as
+select distinct a.patid, a.eventdate, a.prodcode, b.type_id, b.info, b.ingr
+from a.gd_therapy as a
+inner join y.list_rx as b on a.prodcode=b.code 
+where substr(b.type_id,1,5)="SOD_1" and b.code_sys="gold"
+;quit;
+proc sql;
+create table temp_1 as
+select distinct a.patid, a.yob, a.htn_1st_dt,  b.*
+from y.all_pat_gold as a
+inner join temp_sod as b on a.patid=b.patid 
+		and (a.htn_1st_dt - 90 <= b.eventdate and b.eventdate < a.htn_1st_dt)
+group by b.patid, b.type_id
+having count(distinct b.eventdate)>1
+;quit; *16818(180d) > 7618(90d) obs;
+proc sql;
+create table temp_2 as
+select distinct patid, htn_1st_dt, type_id as index_tp
+from temp_1
+order by patid, index_tp
+;quit; *1253;
+data x.incl_gold_1_90d; set temp_2; run;
+proc sql;
+create table temp_0 as
+select distinct *
+from y.seq_pat_gold
+where patid2 not in (select patid2 from x.excl_gold) 
+	and patid in (select patid from x.incl_gold_1_90d)
+order by patid, trial_id
+;quit; *7921(180d)>5924(90d) obs;
+proc sql;
+create table temp_1 as
+select distinct a.* 
+		, max(case when substr(b.type_id,5,1)="1" then 1 else 0 end) as sod_rx
+		, max(case when substr(b.type_id,5,1)="0" then 1 else 0 end) as std_rx
+from temp_0 as a
+left join y.cht_trt_gold as b on a.patid=b.patid 
+		and a.enrol_dt <= b.eventdate < a.enrol_dt + (365.25/12)*3
+		and substr(a.index_tp,7,1)=substr(b.type_id,7,1)
+group by a.patid, a.trial_id, a.index_tp
+;quit; *7871>5924 obs;
+proc sql;
+create table temp_2 as
+select distinct patid, trial_id, enrol_dt, min(sod_rx) as sod_rx, min(std_rx) as std_rx
+from temp_1
+group by patid, trial_id
+;quit;
+data temp_3;
+set temp_2;
+if sod_rx=1 then trt=0; *continue;
+if sod_rx=0 and std_rx=1 then trt=1; *switch to standard form;
+if sod_rx=0 and std_rx=0 then trt=9; *exclude;
+run;
+proc sql;
+create table temp_4 as
+select distinct a.patid, a.enrol_dt, a.trial_id, trt
+	, (
+	case when trt=0 then min(c.eventdate)
+	else case when trt=1 then min(d.eventdate) end end
+	) as rx_1st_dt format yymmdd10.
+	, min(b.eventdate) as outcome_dt format yymmdd10.
+from temp_3 as a
+left join y.cht_out_gold as b on a.patid=b.patid 
+	and a.enrol_dt <= b.eventdate
+left join y.cht_trt_gold as c on a.patid=c.patid 
+	and a.enrol_dt <= c.eventdate and substr(c.type_id,1,5)="SOD_1"
+left join y.cht_trt_gold as d on a.patid=d.patid 
+	and a.enrol_dt <= d.eventdate and substr(d.type_id,1,5)="SOD_0"
+group by a.patid, a.trial_id
+;quit; *7871>5889 obs;
+data x.excl_gold_7_90d x.excl_gold_8_90d;
+set temp_4;
+if trt=9 then output x.excl_gold_7_90d;
+if enrol_dt <= outcome_dt and outcome_dt <=rx_1st_dt then output x.excl_gold_8_90d;
+/*drop outcome_dt rx_1st_dt;*/
+run;
+data temp_5;
+set temp_4;
+if trt=9 then delete;
+if enrol_dt <= outcome_dt and outcome_dt <=rx_1st_dt then delete;
+/*drop outcome_dt rx_1st_dt;*/
+run; *7304>5552 obs;
+data temp_6;
+set temp_5;
+by patid trial_id;
+pre_trial=lag(trial_id);
+if first.patid then do; pre_trial=.; flag_1st=1; end;
+else if trial_id=pre_trial+1 then flag_1st=0;
+else flag_1st=1;
+retain incl 0;
+incl=incl+flag_1st;
+run;
+proc sql;
+create table temp_7 as
+select distinct patid, enrol_dt, trial_id, trt
+from temp_6
+group by patid
+having min(trial_id)=1 and incl=min(incl)
+;quit; *6797>5147 obs;
+data y.seq_asgmt_gold_90d; set temp_7; run;
+/*proc freq data=y.seq_asgmt_gold_90d; table trial_id*trt/norow nocol nopercent; run;*/
+
+/*proc sql;*/
+/*create table test as*/
+/*select distinct a.patid, a.trial_id, a.trt, b.trt as trt_90d*/
+/*from y.fin_wide_gold as a*/
+/*inner join y.seq_asgmt_gold_90d as b on a.patid=b.patid and a.trial_id=b.trial_id*/
+/*having a.trt^=b.trt*/
+/*;quit; *0 obs;*/
+proc sql;
+create table wide_0 as
+select distinct a.*
+from y.fin_wide_gold as a
+inner join y.seq_asgmt_gold_90d as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;*5135 (12: enrol_dt < min(of cens1_dt - cens5_dt));
+proc sql;
+create table long_0 as
+select distinct a.*
+from y.fin_long_gold as a
+inner join y.seq_asgmt_gold_90d as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;*50658;
+
+%IPTW (
+  in_data=wide_0
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+);
+data wide_2; set wide_1; weight=stabiptw; run;
+proc sql;
+create table long_1 as
+select a.*, b.stabiptw as weight
+from long_0 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+
+%MACRO XXX;
+%let count=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let label_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_2, out_data_wide=wide_3
+, in_data_long=long_1, out_data_long=long_2
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%RiskEstimate(
+  in_data_wide=wide_3, in_data_long=long_2, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=, adj_var_cont=
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._ITT_90d
+);
+%let count=%eval(&count.+1);
+
+%OutcomeDataset (
+  in_data_wide=wide_1, out_data_wide=wide_4
+, in_data_long=long_0, out_data_long=long_3
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%IPCW (
+  in_data=long_3, out_data=long_4, group_var=trt
+, censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 - cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22
+		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_1 -  cov_tv_dx_7 cov_tv_dx_9 - cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 - cov_tv_dx_21 cov_tv_dx_24 cov_tv_rx_1 - cov_tv_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8
+, stab_var_cate=cov_base_demo_2 cov_base_demo_7
+, stab_var_cont=cov_base_demo_1 cov_base_demo_8
+);
+proc sql;
+create table long_5 as
+select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
+from long_4 as a
+left join wide_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by a.patid, a.trial_id, a.time_id
+;quit;
+%RiskEstimate(
+  in_data_wide=wide_4, in_data_long=long_5, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=cov_base_demo_2 cov_base_demo_7
+, adj_var_cont=cov_base_demo_1 cov_base_demo_8
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._PP_90d
+);
+proc delete data=wide_3 - wide_4 long_2 - long_5; run; 
+%let count=%eval(&count.+1);
+%end;
+%MEND; %XXX;
+data z.rst_sens2; set rst_1 - rst_12; run;
+%MACRO XXX; %do i=1 %to 12; proc delete data=rst_&i.; run; %end; %MEND; %XXX;
 
 
 
