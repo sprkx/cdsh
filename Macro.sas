@@ -495,7 +495,7 @@ else if &futv_stt_dt. < &outcome._dt and &outcome._dt <= &futv_stt_dt. + &futv_d
 else outcome=0;
 run;
 %MEND;
-%MACRO RiskEstimate(in_data_wide=, in_data_long=, out_data=, group_var=, fu_var=, weight_var=, adj_var_cate=, adj_var_cont=, output_trt1=, output_trt0=, note=);
+%MACRO RiskEstimate(in_data_wide=, in_data_long=, out_data=, group_var=, fu_var=, weight_var=, adj_var_cate=, adj_var_cont=, label_trt1=, label_trt0=, note=);
 proc freq data=&in_data_wide.;
 tables outcome * &group_var. / norow nocol nopercent;
 ods output CrossTabFreqs=freq;
@@ -524,7 +524,7 @@ proc sql;
 create table temp_rst as
 select distinct 
 	a.trt as trt format 1.
-	, (case when a.&group_var.=0 then "&output_trt0." else "&output_trt1." end) as Treatment
+	, (case when a.&group_var.=0 then "&label_trt0." else "&label_trt1." end) as Treatment
 	, b.frequency as Patients label=""
 	, c.frequency as Events label=""
 	, d.fu_day_mean as MeanFU label="" format 8.1
@@ -546,3 +546,74 @@ proc sort data=temp_rst; by descending &group_var.; run;
 data &out_data.; set temp_rst; run;
 proc delete data=temp_rst fu freq risk risk_wt; run;
 %MEND;
+%MACRO PLOT_LONG (type=, in_data=, out_data=, note=
+, line_thick=, label_trt0=, label_trt1=
+, file_name=, format=);	
+data temp; set &in_data.; t=time_id-1; run;
+proc sort data=temp; by patid trial_id t; run;
+
+proc logistic data=temp outmodel=model_4; /*NEED ADJUST FOR WEIGHTS AND BASELINE FACTORS*/
+class trt (ref="0") trial_id cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+model outcome = trt trial_id t t*t trt*t trt*t*t cov_base_demo_1 cov_base_demo_8 cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_1 -  cov_base_dx_7 cov_base_dx_9 - cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 - cov_base_dx_21 cov_base_dx_24 cov_base_rx_1 - cov_base_rx_22;
+weight weight;
+run;
+/* creation of dataset with all time points under each treatment level */
+data temp_1;
+set temp (where = (t=0));
+do t = 0 to 11;
+trt = 1; output; trt = 0; output;
+end;
+run;
+/* assignment of estimated (1-hazard) to each person-month */
+proc logistic inmodel=model_4;
+score data=temp_1 out=pred (keep=patid trial_id t trt P_0 rename = (P_0=p_noevent)) ;
+run;
+proc sort data=pred; by patid trial_id trt t; run;
+/* computation of survival for each person-month */
+data pred_1;
+set pred;
+by  patid trial_id trt;
+retain surv;
+if first.trt then surv=1 ;
+surv=surv*p_noevent;
+run;
+/* some data management to plot estimated survival curves */
+proc means data=pred_1 noprint;
+class trt t;
+var surv;
+types trt*t;
+output out=pred_2 (keep=trt t surv) mean=surv;
+run;
+
+proc sql;
+create table pred_3 as
+select distinct "&note." as note, a.t, a.surv as surv0, (1-a.surv) as ci0
+				, b.surv as surv1, (1-b.surv) as ci1
+				, (b.surv-a.surv) as surv_diff, (a.surv-b.surv) as ci_diff
+from pred_2 as a
+left join pred_2 as b on a.t=b.t and b.trt=1
+where a.trt=0
+;quit;
+
+ods graphics on/ reset imagename="&file_name." imagefmt=&format. ANTIALIASMAX=3133700;
+proc sgplot data = pred_3 ;
+%if &type.=surv %then %do;
+   series x = t y = surv0 /legendlabel="&label_trt0." lineattrs=(pattern=solid color=blue thickness=&line_thick.);
+   series x = t y = surv1 /legendlabel="&label_trt1." lineattrs=(pattern=solid color=red thickness=&line_thick.);
+   title 'Survival probability';
+   yaxis label = 'Survival'  values = (0.0 to 1 by 0.1) ;
+%end;
+%if &type.=ci %then %do;
+   series x = t y = ci0 /legendlabel="&label_trt0." lineattrs=(pattern=solid color=blue thickness=&line_thick.);
+   series x = t y = ci1 /legendlabel="&label_trt1." lineattrs=(pattern=solid color=red thickness=&line_thick.);
+   title 'Cumulative Incidence (%)';
+   yaxis label = 'Cumulative Incidence'  values = (0.0 to 1 by 0.1) ;
+%end;
+   xaxis label = 'Three Months since treatment initiation'  values = (0 to 11 by 1) ;
+   keylegend/noborder title='Treatment: ';
+run;
+ods graphics off;
+data &out_data.; set pred_3; run;
+proc delete data=temp temp_1 pred pred_1 - pred_3 model_4; run;
+%MEND;
+
