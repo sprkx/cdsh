@@ -1758,6 +1758,7 @@ left join x.seq_cov7_gold as h on a.patid=h.patid and a.trial_id=h.trial_id and 
 ;quit;
 data y.seq_cov_gold; set temp; run;
 
+
 /*****************/
 /* Final dataset */
 /*****************/
@@ -1774,7 +1775,7 @@ select distinct a.*, d.htn_1st_dt
 	%do c=1 %to 8; 
 	, c.cov_demo_&c. as cov_base_demo_&c. %end;
 	, c.cov_bp as cov_base_bp
-	%do d=1 %to 24;
+	%do d=1 %to 26;
 	, c.cov_dx_&d. as cov_base_dx_&d. %end;
 	%do e=1 %to 22;
 	, c.cov_rx_&e. as cov_base_rx_&e. %end;
@@ -1793,7 +1794,7 @@ select distinct a.*, b.time_id, b.index_dt
 	%do a=4 %to 8; 
 	, b.cov_demo_&a. as cov_tv_demo_&a. %end;
 	, b.cov_bp as cov_tv_bp
-	%do b=1 %to 24;
+	%do b=1 %to 26;
 	, b.cov_dx_&b. as cov_tv_dx_&b. %end;
 	%do c=1 %to 22;
 	, b.cov_rx_&c. as cov_tv_rx_&c. %end;
@@ -1833,58 +1834,10 @@ if trt=0 then criteria="ENROLMENT - Continuation";
 drop percent;
 run;
 
-%MACRO XXX;
-%do trial_no=1 %to 20;
-
-%let data_list=x.excl_gold_0 x.excl_gold_1 x.excl_gold_4 x.excl_gold_5 x.excl_gold_6 x.excl_gold_7 x.excl_gold_8;
-%do data_n=1 %to %sysfunc(countw(&data_list., %str( ),q));
-%let data_nm=%scan(&data_list., &data_n., %str( ),q);
-
-%let nn=%index(&data_nm.,.);
-%let data_nm_length=%eval(%length(&data_nm.) - &nn.);
-%let new_data=%substr(&data_nm., %eval(%length(&data_nm.) - &data_nm_length.)+1, &data_nm_length.);
-
-data &new_data.;
-set &data_nm.;
-if trial_id=&trial_no.;
-run;
-%end;
-
-%if &trial_no.=1 %then %do;
-%Flow (stt_data=y.cht_pat_gold
-, out_data=temp_flow
-, elig_data_list=excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8
-, id=patid
-); 
-%end;
-
-%else %do;
-data seq_pat_gold;
-set y.fin_wide_gold;
-if trial_id=%eval(&trial_no.-1) and trt=0;
-run; 
-
-%Flow (stt_data=seq_pat_gold
-, out_data=temp_flow
-, elig_data_list=excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8
-, id=patid
-); %end;
-
-data temp_flow_1;
-set temp_flow;
-trial_id=&trial_no.;
-run;
-data temp_flow_2;
-set z.seq_pat_n (drop=trt);
-if trial_id=&trial_no.;
-run;
-data temp_flow_3; set temp_flow_1 temp_flow_2; run;
-data flow_gold_&trial_no.; set temp_flow_3; run;
-
-proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8; run;
-%end;
-%MEND; %XXX;
-
+%flow_trials (flow_stt_data=y.cht_pat_gold
+, excl_data_list=x.excl_gold_0 x.excl_gold_1 x.excl_gold_4 x.excl_gold_5 x.excl_gold_6 x.excl_gold_7 x.excl_gold_8
+, wide_data=y.fin_wide_gold
+, seq_patn_data=z.seq_pat_n);
 data z.flow_seq; set flow_gold_0 - flow_gold_20; run;
 
 *Baseline characteristics;
@@ -2469,4 +2422,363 @@ data z.rst_sens2; set rst_1 - rst_12; run;
 
 
 
+
+
+
+/*************/
+/* version 2 */
+/*************/
+
+* Additional codes: migrane & bipolar disorder;
+data tmp_1; 
+set a.migraine_gold;
+keep type_id info medcode code_sys;
+type_id="COV_DX_25";
+Info="Migraine";
+code_sys="gold";
+rename medcode=code;
+run;
+data tmp_2; 
+set a.bipolar_gold;
+keep type_id info medcode code_sys;
+type_id="COV_DX_26";
+Info="Bipolar disorder";
+code_sys="gold";
+rename medcode=code;
+run;
+data tmp_3; 
+set a.migraine_aurum;
+keep type_id info medcodeid code_sys;
+type_id="COV_DX_25";
+Info="Migraine";
+code_sys="aurum";
+rename medcodeid=code;
+run;
+data tmp_4; 
+set a.bipolar_aurum;
+keep type_id info medcodeid code_sys;
+type_id="COV_DX_26";
+Info="Bipolar disorder";
+code_sys="aurum";
+rename medcodeid=code;
+run;
+
+data tmp_5; set y.list_dx tmp_1 - tmp_4; run;
+data y.list_dx; set tmp_5; run;
+
+**dx, dx (hes), rx;
+proc sql;
+create table temp_1 as
+select distinct a.patid, a.eventdate, b.type_id
+from y.all_dx_gold as a
+inner join y.list_dx as b on a.code=b.code 
+where substr(b.type_id,1,6)="COV_DX" and b.code_sys="gold" and a.eventdate^=.
+;quit;
+
+proc sql;
+create table temp_2 as
+select distinct a.patid, a.eventdate, b.type_id
+from y.all_dx_gold as a
+inner join y.list_dx as b on substr(a.code,1,3)=b.code or substr(a.code,1,5)=b.code
+where substr(b.type_id,1,6)="COV_DX" and b.code_sys="hes" and a.eventdate^=.
+;quit;
+
+proc sql;
+create table temp_3 as 
+select distinct a.patid, a.eventdate, b.type_id
+from y.all_rx_gold as a
+inner join y.list_rx as b on a.prodcode=b.code
+where substr(b.type_id,1,6)="COV_RX" and b.code_sys="gold" and a.eventdate^=.
+;quit;
+
+data y.cht_cov_dxrx_gold; set temp_1 - temp_3; run;
+
+
+**history of dx, rx (*dyslipidaemia would be defined by dx and lab data);
+proc sql;
+create table history_1 as
+select distinct a.patid, a.trial_id, a.enrol_dt, a.time_id, a.index_dt, b.*
+from x.seq_indextv_gold as a
+inner join y.cht_cov_dxrx_gold as b on a.patid=b.patid and 0 < b.eventdate and b.eventdate <= a.index_dt
+where substr(type_id,1,6)="COV_DX"
+;quit;
+data history_2;
+set history_1;
+if type_id="COV_DX_13" and eventdate <= index_dt-180 then delete;
+run;*Infection but not recent;
+proc sql;
+create table history_3 as
+select distinct a.patid, a.trial_id, a.enrol_dt, a.time_id, a.index_dt, b.*
+from x.seq_indextv_gold as a
+inner join y.cht_cov_dxrx_gold as b on a.patid=b.patid and (a.index_dt-180 < b.eventdate and b.eventdate <= a.index_dt) 
+where substr(type_id,1,6)="COV_RX"
+;quit;
+data history_4; set history_2 history_3; run;
+%MACRO XXX;
+proc sql;
+create table history_5 as
+select distinct patid, trial_id, enrol_dt, time_id, index_dt
+	%do a=1 %to 26; , (case when type_id="COV_DX_&a." then 1 else 0 end) as COV_DX_&a. %end;
+	%do b=1 %to 22; , (case when type_id="COV_RX_&b." then 1 else 0 end) as COV_RX_&b. %end;
+from history_4
+;quit;
+proc sql;
+create table history_6 as
+select distinct patid, trial_id, enrol_dt, time_id, index_dt
+	%do a=1 %to 26; , max(COV_DX_&a.) as COV_DX_&a. %end;
+	%do b=1 %to 22; , max(COV_RX_&b.) as COV_RX_&b. %end;
+from history_5
+group by patid, trial_id, time_id
+;quit;
+%MEND; %XXX;
+proc sql;
+create table history_7 as
+select distinct a.patid, a.trial_id, a.time_id, b.*, c.cov_dx_7_lab
+from x.seq_indextv_gold as a
+left join history_6 as b on a.patid=b.patid and a.trial_id=b.trial_id and a.time_id=b.time_id
+left join x.seq_cov2_gold as c on a.patid=c.patid and a.trial_id=c.trial_id and a.time_id=c.time_id
+;quit;
+data history_8;
+set history_7;
+V=max(cov_dx_7, cov_dx_7_lab);
+drop cov_dx_7 cov_dx_7_lab;
+rename v=COV_DX_7;
+Run;
+proc stdize data=history_8 out=history_9 reponly missing=0; run;
+/*proc tabulate data=history_9;*/
+/*class COV_DX_1 - COV_DX_24 COV_RX_1 - COV_RX_22;*/
+/*table (all COV_DX_1 - COV_DX_24 COV_RX_1 - COV_RX_22),(N ColPctn);*/
+/*run;*/
+data x.seq_cov7_gold; set history_9; run;
+
+proc sql;
+create table temp as
+select distinct a.*, b.*, c.*, d.*, e.*, f.*, g.*, h.*
+from x.seq_indextv_gold as a
+left join x.seq_cov1_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
+left join x.seq_cov2_gold as c on a.patid=c.patid and a.trial_id=c.trial_id and a.time_id=c.time_id
+left join x.seq_cov3_gold as d on a.patid=d.patid and a.trial_id=d.trial_id and a.time_id=d.time_id
+left join x.seq_cov4_gold as e on a.patid=e.patid and a.trial_id=e.trial_id and a.time_id=e.time_id
+left join x.seq_cov5_gold as f on a.patid=f.patid and a.trial_id=f.trial_id and a.time_id=f.time_id
+left join x.seq_cov6_gold as g on a.patid=g.patid and a.trial_id=g.trial_id and a.time_id=g.time_id
+left join x.seq_cov7_gold as h on a.patid=h.patid and a.trial_id=h.trial_id and a.time_id=h.time_id
+;quit;
+data y.seq_cov_gold; set temp; run;
+
+data x.excl_gold_9 x.excl_gold_10;
+set y.seq_cov_gold;
+id=cat(compress(patid),"-",compress(trial_id));
+if max(cov_dx_8, cov_dx_15, cov_dx_17, cov_dx_22,cov_dx_23)=1 then output x.excl_gold_9;
+if max(cov_dx_1, cov_dx_2, cov_dx_3)=1 then output x.excl_gold_10;
+run;
+data seq_asgmt_gold;
+set y.seq_asgmt_gold;
+id=cat(compress(patid),"-",compress(trial_id));
+run;
+data excl; set x.excl_gold_9 x.excl_gold_10; run;
+
+%MACRO XXX;
+proc sql;
+create table temp as 
+select distinct a.*, d.htn_1st_dt
+	%do a=1 %to 6;
+	, b.out&a._dt %end;
+	%do b=1 %to 6;
+	, b.cens&b._dt %end;
+	, b.cens6_dt1, b.cens6_dt2
+	%do c=1 %to 8; 
+	, c.cov_demo_&c. as cov_base_demo_&c. %end;
+	, c.cov_bp as cov_base_bp
+	%do d=1 %to 26;
+	, c.cov_dx_&d. as cov_base_dx_&d. %end;
+	%do e=1 %to 22;
+	, c.cov_rx_&e. as cov_base_rx_&e. %end;
+from seq_asgmt_gold as a
+inner join y.seq_fu_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
+left join y.seq_cov_gold as c on a.patid=c.patid and a.trial_id=c.trial_id and c.time_id=1
+left join y.seq_pat_gold as d on a.patid=d.patid
+where id not in (select id from excl)
+;quit;
+%MEND; %XXX;
+data y.fin_wide_gold_v2; set temp; run; *4599;
+
+%MACRO XXX;
+proc sql;
+create table temp_1 as 
+select distinct a.*, b.time_id, b.index_dt
+	%do a=4 %to 8; 
+	, b.cov_demo_&a. as cov_tv_demo_&a. %end;
+	, b.cov_bp as cov_tv_bp
+	%do b=1 %to 26;
+	, b.cov_dx_&b. as cov_tv_dx_&b. %end;
+	%do c=1 %to 22;
+	, b.cov_rx_&c. as cov_tv_rx_&c. %end;
+from y.fin_wide_gold_v2 as a 
+left join y.seq_cov_gold as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+%MEND; %XXX; *46235;
+data y.fin_long_gold_v2; set temp_1; run;
+
+
+
+*Flow chart;
+%Flow (stt_data=a.gd_patient
+, out_data=temp_flow
+, elig_data_list=x.incl_pre_gold_0 x.incl_pre_gold_1 x.incl_pre_gold_2 x.incl_pre_gold_3 x.incl_gold_0 x.incl_gold_1 x.incl_gold_2
+, id=patid
+);
+data flow_gold_0;
+set temp_flow;
+trial_id=0;
+run;
+
+proc freq data=y.fin_wide_gold_v2; table trial_id*trt/norow nocol nopercent out=seq_pat; run;
+data z.seq_pat_n_v2;
+set seq_pat;
+rename count=n_rest;
+if trt=1 then criteria="ENROLMENT - Discontinuation";
+if trt=0 then criteria="ENROLMENT - Continuation";
+drop percent;
+run;
+%flow_trials (flow_stt_data=y.cht_pat_gold
+, excl_data_list=x.excl_gold_0 x.excl_gold_1 x.excl_gold_4 x.excl_gold_5 x.excl_gold_6 x.excl_gold_9 x.excl_gold_10 x.excl_gold_7 x.excl_gold_8
+, wide_data=y.fin_wide_gold_v2
+, seq_patn_data=z.seq_pat_n_v2);
+
+data z.flow_seq_v2; set flow_gold_0 - flow_gold_20; run;
+/*proc print data=z.flow_seq_v2; run;*/
+
+*Baseline characteristics;
+%Table1 (in_for_table1=y.fin_wide_gold_v2
+, treatment_var=trt
+, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_24 cov_base_dx_25 cov_base_dx_26 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, continuous_var_list=cov_base_demo_1 cov_base_demo_8
+, weight=dummy_weight
+, out_table1=z.char_crude_v2);
+/*proc freq data=x.seq_cov7_gold; table cov_dx_26; run;*/
+
+%IPTW (in_data=y.fin_wide_gold_v2
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_24 cov_base_dx_25 cov_base_dx_26 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+); 
+%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=iptw, min=0, max=99.5);
+/*proc freq data=temp; table iptw; run;*/
+%Table1 (in_for_table1=wide_2
+, treatment_var=trt
+, categorical_var_list=cov_base_demo_2 cov_base_demo_3 cov_base_demo_4 cov_base_demo_5 cov_base_demo_6 cov_base_demo_7 cov_base_bp cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_24 cov_base_dx_25 cov_base_dx_26 cov_base_rx_1 cov_base_rx_2 cov_base_rx_3 cov_base_rx_4 cov_base_rx_5 cov_base_rx_6 cov_base_rx_7 cov_base_rx_8 cov_base_rx_9 cov_base_rx_10 cov_base_rx_11 cov_base_rx_12 cov_base_rx_13 cov_base_rx_14 cov_base_rx_15 cov_base_rx_16 cov_base_rx_17 cov_base_rx_18 cov_base_rx_19 cov_base_rx_20 cov_base_rx_21 cov_base_rx_22
+, continuous_var_list=cov_base_demo_1 cov_base_demo_8
+, weight=iptw
+, out_table1=z.char_weight_v2);
+
+*Risk Analysis;
+**Intention-to-treat;
+data wide_0; set y.fin_wide_gold_v2; run;
+data long_0; set y.fin_long_gold_v2; run;
+
+%IPTW (
+  in_data=wide_0
+, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_24 cov_base_dx_25 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+); *cov_base_dx_26 X;
+%TRUNCATION (in_data=wide_1, out_data=wide_2, weight=stabiptw, min=0, max=99.5);
+
+proc sql;
+create table long_1 as
+select a.*, b.stabiptw as weight
+from long_0 as a
+left join wide_2 as b on a.patid=b.patid and a.trial_id=b.trial_id
+;quit;
+
+%MACRO XXX;
+%let count=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let label_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_2, out_data_wide=wide_3
+, in_data_long=long_1, out_data_long=long_2
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%RiskEstimate(
+  in_data_wide=wide_3, in_data_long=long_2, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=, adj_var_cont=
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._ITT
+);
+proc delete data=wide_3 long_2; run; 
+%let count=%eval(&count.+1);
+%end;
+%MEND; %XXX;
+data z.rst_itt_v2; set rst_1 - rst_6; run;
+proc delete data=rst_1 - rst_6; run;
+
+**Per-protocol analysis;
+data wide_0; set y.fin_wide_gold_v2; run;
+data long_0; set y.fin_long_gold_v2; run;
+
+%IPTW (
+  in_data=wide_0, out_data=wide_1
+, group_var=trt
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_24 cov_base_dx_25 cov_base_rx_1 - cov_base_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8
+);
+%MACRO XXX;
+%let count=1;
+%let outcome_list=MACE MI Stroke CVdeath HHF Death;
+%do out_i=1 %to 6;
+%let label_outcome=%scan(&outcome_list.,&out_i.);
+%OutcomeDataset (
+  in_data_wide=wide_1, out_data_wide=wide_2
+, in_data_long=long_0, out_data_long=long_1
+, fu_stt_dt=enrol_dt, fu_end_dt=min(cens1_dt, cens2_dt, cens3_dt, cens4_dt, cens5_dt, cens6_dt)
+, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, outcome=out&out_i., output_fu_var=fu_day
+);
+%IPCW (
+  in_data=long_1, out_data=long_2, group_var=trt
+, censor_dt=cens6_dt, futv_stt_dt=index_dt, futv_dur=(365.25/12)*3
+, var_cate=cov_base_demo_2 - cov_base_demo_7 cov_base_bp cov_base_dx_4 cov_base_dx_5 cov_base_dx_6 cov_base_dx_7 cov_base_dx_9 cov_base_dx_10 cov_base_dx_11 cov_base_dx_12 cov_base_dx_13 cov_base_dx_14 cov_base_dx_16 cov_base_dx_18 cov_base_dx_19 cov_base_dx_20 cov_base_dx_21 cov_base_dx_24 cov_base_dx_25 cov_base_rx_1 - cov_base_rx_22
+		   cov_tv_demo_4 - cov_tv_demo_7 cov_tv_bp cov_tv_dx_4 cov_tv_dx_5 cov_tv_dx_6 cov_tv_dx_7 cov_tv_dx_9 cov_tv_dx_10 cov_tv_dx_11 cov_tv_dx_12 cov_tv_dx_13 cov_tv_dx_14 cov_tv_dx_16 cov_tv_dx_18 cov_tv_dx_19 cov_tv_dx_20 cov_tv_dx_21 cov_tv_dx_24 cov_tv_dx_25 cov_tv_rx_1 - cov_tv_rx_22
+, var_cont=cov_base_demo_1 cov_base_demo_8 cov_tv_demo_8
+, stab_var_cate=cov_base_demo_2 cov_base_demo_7
+, stab_var_cont=cov_base_demo_1 cov_base_demo_8
+);
+proc sql;
+create table long_3 as
+select a.*, b.iptw, b.stabiptw, (a.stabipcw*b.stabiptw) as weight
+from long_2 as a
+left join wide_1 as b on a.patid=b.patid and a.trial_id=b.trial_id
+order by a.patid, a.trial_id, a.time_id
+;quit;
+%TRUNCATION (in_data=long_3, out_data=long_4, weight=weight, min=0, max=99.5);
+%RiskEstimate(
+  in_data_wide=wide_2, in_data_long=long_4, out_data=rst_&count.
+, group_var=trt, fu_var=fu_day, weight_var=weight
+, adj_var_cate=cov_base_demo_2 cov_base_demo_7
+, adj_var_cont=cov_base_demo_1 cov_base_demo_8
+, label_trt1=Discontinuation, label_trt0=Continuation, note=&label_outcome._PP
+);
+proc delete data=wide_2 long_2 long_3 long_4; run; 
+%let count=%eval(&count.+1);
+%end;
+%MEND; %XXX;
+data z.rst_pp_v2; set rst_1 - rst_6; run;
+proc delete data=rst_1 - rst_6; run;
+
+proc print data=z.char_crude_v2; run;
+proc print data=z.char_weight_v2; run;
+proc print data=z.rst_itt_v2; run;
+
+
+
+
+
 *);*/;/*'*/ /*"*/; %MEND;run;quit;;;;;
+
+
