@@ -130,6 +130,59 @@ data excl; set excl_1 - excl_&i.; run;
 data temp_3; merge rest excl; run;
 data &out_data.; set rest_0 temp_3; run; 
 %MEND;
+%MACRO flow_trials(flow_stt_data=, excl_data_list=, wide_data=, seq_patn_data=);
+%do trial_no=1 %to 20;
+
+%let data_list=&excl_data_list.;
+%let new_data_list=;
+
+%do data_n=1 %to %sysfunc(countw(&data_list., %str( ),q));
+%let data_nm=%scan(&data_list., &data_n., %str( ),q);
+%let nn=%index(&data_nm.,.);
+%let data_nm_length=%eval(%length(&data_nm.) - &nn.);
+%let new_data=%substr(&data_nm., %eval(%length(&data_nm.) - &data_nm_length.)+1, &data_nm_length.);
+
+data &new_data.;
+set &data_nm.;
+if trial_id=&trial_no.;
+run;
+%let new_data_list=&new_data_list. &new_data.;
+%end;
+
+%if &trial_no.=1 %then %do;
+%Flow (stt_data=&flow_stt_data.
+, out_data=temp_flow
+, elig_data_list=&new_data_list.
+, id=patid
+); 
+%end;
+
+%else %do;
+data seq_pat_gold;
+set &wide_data.;
+if trial_id=%eval(&trial_no.-1) and trt=0;
+run; 
+
+%Flow (stt_data=seq_pat_gold
+, out_data=temp_flow
+, elig_data_list=&new_data_list.
+, id=patid
+); %end;
+
+data temp_flow_1;
+set temp_flow;
+trial_id=&trial_no.;
+run;
+data temp_flow_2;
+set &seq_patn_data. (drop=trt);
+if trial_id=&trial_no.;
+run;
+data temp_flow_3; set temp_flow_1 temp_flow_2; run;
+data flow_gold_&trial_no.; set temp_flow_3; run;
+
+proc delete data=temp_flow_1 temp_flow_2 seq_pat_gold excl_gold_0 excl_gold_1 excl_gold_4 excl_gold_5 excl_gold_6 excl_gold_7 excl_gold_8; run;
+%end;
+%MEND;
 %MACRO TABLE1 (in_for_table1= , treatment_var= , categorical_var_list= , continuous_var_list= , weight=dummy_weight, out_table1= ); 
 * we dont need to see each 2 by 2 table or proc means output, so suppressing it. this information is saved as sas datasets 
 and provided in excel format later; 
